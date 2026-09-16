@@ -54,6 +54,9 @@ limits:
   backfill_download_hours: 24 # download backfill videos only this close to their slot
   min_free_disk_gb: 2
   retry_runs: 3               # failed publishes retried on the next N runs
+  slot_grace_minutes: 90      # a slot missed by more than this (Mac asleep, worker down) moves to the next free slot
+  max_publish_per_run: 1      # uploads attempted per platform per worker run; the rest move to the next free slot
+  max_publish_per_day: null   # uploads per platform per local day; null = the number of slots on that weekday
 
 rewrite:                      # titles and captions rewritten by Claude; switch on per workflow in the UI
   model: "claude-opus-5"

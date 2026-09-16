@@ -50,6 +50,7 @@ class Run:
         self.failed: list[tuple[str, str, str]] = []
         self.held: list[tuple[str, str]] = []
         self.rolled: list[tuple[str, str, str]] = []
+        self.deferred: list[tuple[str, str, str, str | None]] = []
         self.alerts: list[str] = []
         self.needs_attention: list[tuple[str, str, str]] = []
         self.videos_seen = 0
@@ -76,7 +77,7 @@ class Run:
         return {
             "run_id": self.run_id, "kind": self.kind, "videos_seen": self.videos_seen,
             "published": self.published, "failed": self.failed, "held": self.held, "rolled": self.rolled,
-            "alerts": self.alerts, "needs_attention": self.needs_attention, "stage_errors": self.stage_errors,
+            "deferred": self.deferred, "alerts": self.alerts, "needs_attention": self.needs_attention, "stage_errors": self.stage_errors,
             "notes": self.notes,
         }
 
@@ -196,6 +197,8 @@ def stage_publish(conn: sqlite3.Connection, cfg: dict[str, Any], run: Run, overr
             run.failed.append((plat, tiktok_id, err))
         for tiktok_id in res["rolled"]:
             run.rolled.append((plat, tiktok_id, res["note"] or "quota"))
+        for tiktok_id, why, new_slot in res.get("deferred", []):
+            run.deferred.append((plat, tiktok_id, why, new_slot))
         for tiktok_id, why in res["skipped"]:
             run.held.append((tiktok_id, why))
         if res["note"]:

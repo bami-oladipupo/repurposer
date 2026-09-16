@@ -37,9 +37,14 @@ def build_summary(run: dict[str, Any]) -> tuple[str, bool]:
             lines.append(f"  {tiktok_id}: {reason}")
     rolled = run.get("rolled") or []
     if rolled:
-        lines.append("Slots rolled to tomorrow")
+        lines.append("Slots moved (quota)")
         for plat, tiktok_id, why in rolled:
             lines.append(f"  {plat}: {tiktok_id} ({why})")
+    deferred = [d for d in (run.get("deferred") or []) if d[2] != "quota"]  # quota moves are listed above
+    if deferred:
+        lines.append("Moved to a later slot")
+        for plat, tiktok_id, why, new_slot in deferred:
+            lines.append(f"  {plat}: {tiktok_id} ({why}) -> {new_slot or 'waiting for a free slot'}")
     failed = run.get("failed") or []
     if failed:
         failures += len(failed)
@@ -66,7 +71,7 @@ def build_summary(run: dict[str, Any]) -> tuple[str, bool]:
     header = f"Repurposer run #{run.get('run_id', '?')} ({run.get('kind', 'cycle')}): " \
              f"{run.get('videos_seen', 0)} seen, {len(published)} published, {failures} problem(s)"
     text = header + ("\n\n" + "\n".join(lines) if lines else "")
-    must_send = bool(published or failed or alerts or stage_errors or rolled or attention)
+    must_send = bool(published or failed or alerts or stage_errors or rolled or attention or deferred)
     return text, must_send
 
 

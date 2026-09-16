@@ -53,7 +53,9 @@ def test_disabled_workflow_publishes_nothing(tmp_db, cfg, fake):
     assert out["note"] == "workflow disabled" and fake.calls == []
 
 
-def test_quota_exhausted_rolls_due_slots_a_day(tmp_db, cfg, fake):
+def test_quota_exhausted_moves_due_slots_to_next_free_slots(tmp_db, cfg, fake):
+    """Quota exhaustion no longer stacks every due video onto the same time tomorrow: each takes
+    the next free slot, so tomorrow's slots still hold one video each."""
     fake.quota = (False, "daily quota used")
     when = utcnow() - timedelta(minutes=30)
     due_video(tmp_db, "a", yt_scheduled_for=iso(when))
@@ -62,10 +64,137 @@ def test_quota_exhausted_rolls_due_slots_a_day(tmp_db, cfg, fake):
     out = publish_due(tmp_db, cfg, "youtube", {})
     assert sorted(out["rolled"]) == ["a", "b"] and out["published"] == [] and fake.calls == []
     assert "daily quota used" in out["note"] and "2 slot(s)" in out["note"]
-    assert db.get_video(tmp_db, "a")["yt_scheduled_for"] == iso(when + timedelta(days=1))
-    assert db.get_video(tmp_db, "b")["yt_scheduled_for"] == iso(when - timedelta(hours=1) + timedelta(days=1))
-    assert db.get_video(tmp_db, "a")["yt_status"] == "scheduled"
+    slots = {v: db.get_video(tmp_db, v)["yt_scheduled_for"] for v in ("a", "b")}
+    assert all(parse(t) > utcnow() for t in slots.values())
+    assert len(set(slots.values())) == 2
+    assert all(db.get_video(tmp_db, v)["yt_status"] == "scheduled" for v in ("a", "b"))
     assert db.get_video(tmp_db, "future")["yt_scheduled_for"] == iso(when + timedelta(days=3))
+    assert {d[0] for d in out["deferred"]} == {"a", "b"} and all(d[1] == "quota" for d in out["deferred"])
+
+
+# ---------- burst guards (five Shorts went out in one run on 2026-09-15 after two days asleep) ----------
+
+def future_and_distinct(conn, ids):
+    times = [db.get_video(conn, v)["yt_scheduled_for"] for v in ids]
+    assert all(t and parse(t) > utcnow() for t in times), times
+    assert len(set(times)) == len(times), times
+    assert all(db.get_video(conn, v)["yt_status"] == "scheduled" for v in ids)
+    return times
+
+
+def test_missed_slots_move_forward_instead_of_publishing_in_a_burst(tmp_db, cfg, fake):
+    """The 2026-09-15 incident: the worker had not run for two days. Four slots had passed long ago
+    and one had just passed. Exactly one video goes out; the other four take the next free slots."""
+    now = utcnow()
+    stale = ["d3a", "d3b", "d2a", "d2b"]
+    due_video(tmp_db, "d3a", yt_scheduled_for=iso(now - timedelta(days=3, hours=2)))
+    due_video(tmp_db, "d3b", yt_scheduled_for=iso(now - timedelta(days=2, hours=18)))
+    due_video(tmp_db, "d2a", yt_scheduled_for=iso(now - timedelta(days=2, hours=2)))
+    due_video(tmp_db, "d2b", yt_scheduled_for=iso(now - timedelta(days=1, hours=18)))
+    due_video(tmp_db, "fresh", yt_scheduled_for=iso(now - timedelta(minutes=20)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert [t for t, _ in out["published"]] == ["fresh"] and fake.calls == ["fresh"]
+    assert sorted(d[0] for d in out["deferred"]) == sorted(stale)
+    assert all("missed" in d[1] for d in out["deferred"])
+    future_and_distinct(tmp_db, stale)
+    assert "4 missed slot(s)" in out["note"]
+    # Nothing else goes out on the next run either: the moved slots are in the future.
+    assert publish_due(tmp_db, cfg, "youtube", {})["published"] == [] and fake.calls == ["fresh"]
+
+
+def test_missed_slot_within_grace_still_publishes(tmp_db, cfg, fake):
+    cfg["limits"]["slot_grace_minutes"] = 90
+    due_video(tmp_db, "v", yt_scheduled_for=iso(utcnow() - timedelta(minutes=89)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert [t for t, _ in out["published"]] == ["v"] and out["deferred"] == []
+
+
+def test_stale_slot_is_moved_even_when_video_is_not_ready_yet(tmp_db, cfg, fake):
+    """A backfill video whose download never happened while the Mac slept must not keep a dead slot."""
+    add_video(tmp_db, "nd", status="new", yt_status="scheduled", yt_scheduled_for=iso(utcnow() - timedelta(days=1)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert out["published"] == [] and [d[0] for d in out["deferred"]] == ["nd"]
+    future_and_distinct(tmp_db, ["nd"])
+    assert db.get_video(tmp_db, "nd")["status"] == "new"
+
+
+def test_only_one_upload_per_run_by_default(tmp_db, cfg, fake):
+    now = utcnow()
+    due_video(tmp_db, "first", yt_scheduled_for=iso(now - timedelta(minutes=40)))
+    due_video(tmp_db, "second", yt_scheduled_for=iso(now - timedelta(minutes=10)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert [t for t, _ in out["published"]] == ["first"] and fake.calls == ["first"]
+    assert [d[0] for d in out["deferred"]] == ["second"] and "per run" in out["deferred"][0][1]
+    future_and_distinct(tmp_db, ["second"])
+
+
+def test_max_publish_per_run_is_configurable(tmp_db, cfg, fake):
+    cfg["limits"]["max_publish_per_run"] = 2
+    now = utcnow()
+    due_video(tmp_db, "a", yt_scheduled_for=iso(now - timedelta(minutes=40)))
+    due_video(tmp_db, "b", yt_scheduled_for=iso(now - timedelta(minutes=10)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert sorted(t for t, _ in out["published"]) == ["a", "b"] and out["deferred"] == []
+
+
+def test_daily_limit_defaults_to_slot_count_and_defers_the_rest(tmp_db, cfg, fake):
+    """Config seeds two slots a day, so the third upload of a local day waits for tomorrow."""
+    now = utcnow()
+    add_video(tmp_db, "u1", status="done", yt_status="uploaded", yt_published_at=iso(now - timedelta(minutes=5)))
+    add_video(tmp_db, "u2", status="done", yt_status="uploaded", yt_published_at=iso(now - timedelta(minutes=3)))
+    due_video(tmp_db, "third", yt_scheduled_for=iso(now - timedelta(minutes=10)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert out["published"] == [] and fake.calls == []
+    assert [d[0] for d in out["deferred"]] == ["third"] and "daily limit" in out["deferred"][0][1]
+    assert "daily limit reached (2/2" in out["note"]
+    future_and_distinct(tmp_db, ["third"])
+
+
+def test_daily_limit_from_config(tmp_db, cfg, fake):
+    cfg["limits"]["max_publish_per_day"] = 1
+    add_video(tmp_db, "u1", status="done", yt_status="uploaded", yt_published_at=iso(utcnow() - timedelta(minutes=5)))
+    due_video(tmp_db, "v", yt_scheduled_for=iso(utcnow() - timedelta(minutes=10)))
+    assert publish_due(tmp_db, cfg, "youtube", {})["published"] == [] and fake.calls == []
+    cfg["limits"]["max_publish_per_day"] = 3
+    due_video(tmp_db, "w", yt_scheduled_for=iso(utcnow() - timedelta(minutes=10)))  # 'v' now holds a future slot
+    assert [t for t, _ in publish_due(tmp_db, cfg, "youtube", {})["published"]] == ["w"]
+
+
+def test_uploads_before_local_midnight_do_not_count_today(tmp_db, cfg, fake):
+    add_video(tmp_db, "y1", status="done", yt_status="uploaded", yt_published_at=iso(utcnow() - timedelta(days=1, minutes=1)))
+    add_video(tmp_db, "y2", status="done", yt_status="uploaded", yt_published_at=iso(utcnow() - timedelta(days=1, minutes=2)))
+    due_video(tmp_db, "v", yt_scheduled_for=iso(utcnow() - timedelta(minutes=10)))
+    assert [t for t, _ in publish_due(tmp_db, cfg, "youtube", {})["published"]] == ["v"]
+
+
+def test_publish_now_bypasses_the_burst_guards(tmp_db, cfg, fake):
+    now = utcnow()
+    add_video(tmp_db, "u1", status="done", yt_status="uploaded", yt_published_at=iso(now - timedelta(minutes=5)))
+    add_video(tmp_db, "u2", status="done", yt_status="uploaded", yt_published_at=iso(now - timedelta(minutes=3)))
+    due_video(tmp_db, "old", yt_scheduled_for=iso(now - timedelta(days=2)))
+    due_video(tmp_db, "other", yt_scheduled_for=iso(now - timedelta(days=2)))
+    out = publish_due(tmp_db, cfg, "youtube", {}, only="old")
+    assert [t for t, _ in out["published"]] == ["old"] and fake.calls == ["old"]
+    # The other stale row is untouched by a Publish Now run; the next automatic run moves it.
+    assert db.get_video(tmp_db, "other")["yt_scheduled_for"] == iso(now - timedelta(days=2))
+    assert out["deferred"] == []
+
+
+def test_dry_run_reports_missed_slots_without_moving_them(tmp_db, cfg, fake):
+    when = iso(utcnow() - timedelta(days=1))
+    due_video(tmp_db, "v", yt_scheduled_for=when)
+    out = publish_due(tmp_db, cfg, "youtube", {}, dry_run=True)
+    assert out["published"] == [] and out["deferred"] == [] and fake.calls == []
+    assert "1 missed slot(s) would move" in out["note"]
+    assert db.get_video(tmp_db, "v")["yt_scheduled_for"] == when
+
+
+def test_failed_retry_is_not_moved_by_the_stale_guard(tmp_db, cfg, fake):
+    """Retries keep their slot in the past on purpose (that is what makes them due again)."""
+    when = iso(utcnow() - timedelta(hours=5))
+    add_video(tmp_db, "r", status="ready", local_path="f.mp4", yt_status="failed", yt_attempts=1, yt_scheduled_for=when)
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert [t for t, _ in out["published"]] == ["r"] and out["deferred"] == []
 
 
 def test_override_hold_prevents_publishing(tmp_db, cfg, fake):

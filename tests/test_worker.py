@@ -164,3 +164,27 @@ def test_cmd_status_and_job_publish_now(offline, capsys):
     assert job["ok"] == 1 and job["error"] is None and job["finished_at"]
     assert db.get_video(conn, "t1")["yt_status"] == "uploaded" and offline["pub"].calls == ["t1"]
     assert worker.cmd_job(conn, cfg, offline["log"], 999) == 2
+
+
+def test_cycle_after_two_days_asleep_publishes_one_and_moves_the_rest(offline, capsys):
+    """The 2026-09-15 incident through a full cycle: five slots had passed; one video goes out."""
+    conn, cfg, pub = offline["conn"], offline["cfg"], offline["pub"]
+    now = utcnow()
+    for name, ago in (("s1", timedelta(days=2, hours=20)), ("s2", timedelta(days=2, hours=12)),
+                      ("s3", timedelta(days=1, hours=20)), ("s4", timedelta(days=1, hours=12))):
+        add_video(conn, name, status="ready", local_path="f.mp4", yt_status="scheduled", yt_scheduled_for=iso(now - ago))
+    add_video(conn, "s5", status="ready", local_path="f.mp4", yt_status="scheduled", yt_scheduled_for=iso(now - timedelta(minutes=30)))
+    assert worker.cmd_cycle(conn, cfg, offline["log"]) == 0
+    assert pub.calls == ["s5"]
+    r = runs(conn)[0]
+    assert r["videos_published"] == 1 and r["ok"] == 1
+    summary = json.loads(r["summary"])
+    assert sorted(d[1] for d in summary["deferred"]) == ["s1", "s2", "s3", "s4"]
+    moved = [db.get_video(conn, v)["yt_scheduled_for"] for v in ("s1", "s2", "s3", "s4")]
+    assert all(m > iso(now) for m in moved) and len(set(moved)) == 4
+    out = capsys.readouterr().out
+    assert "Moved to a later slot" in out and "missed" in out
+    # Later runs publish nothing until those slots arrive.
+    for _ in range(3):
+        worker.cmd_cycle(conn, cfg, offline["log"])
+    assert pub.calls == ["s5"]

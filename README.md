@@ -71,7 +71,21 @@ Kept here for a rebuild. Google Cloud project → enable YouTube Data API v3 →
 
 New Google projects can only upload as private until YouTube's API compliance audit is approved. Ours was approved on 3 September 2026; `scripts/check_audit.py` uploads a two-second unlisted clip and reads back the status Google kept, if you ever need to re-check.
 
-Quota: 10,000 units a day, 1,600 per upload, so about six uploads a day. The worker logs the estimate every run and rolls slots to tomorrow when the estimate is spent.
+Quota: 10,000 units a day, 1,600 per upload, so about six uploads a day. The worker logs the estimate every run and moves due videos to the next free slot when the estimate is spent.
+
+## Missed slots and burst limits
+
+On 15 September 2026 five Shorts went out in one run. The Mac had been asleep for two days, launchd does not fire while it sleeps, and when the worker came back every slot since the 12th was still "due". The publisher had no rule against publishing a stale slot, so it cleared the backlog in one go. Three limits in `config.yaml` under `limits` now stop that, and they apply to every automatic run (Publish Now ignores them on purpose):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `slot_grace_minutes` | 90 | A slot that passed more than this long ago is stale. The video is never published late; it goes back to the queue and takes the next free slot. This also covers a video that was not downloaded in time. |
+| `max_publish_per_run` | 1 | Uploads attempted per platform per run. Anything else that is due moves to the next free slot. |
+| `max_publish_per_day` | null | Uploads per platform per local day. `null` means the number of slots configured for that weekday, so two slots means at most two uploads a day whatever happens. |
+
+Moved videos show up in the Telegram summary under "Moved to a later slot" with their new time, and in the run's notes on the Runs page. `python worker.py --dry-run` reports how many missed slots it would move without moving them.
+
+The limits cap the damage; they do not make the Mac run the worker while it sleeps. If you want slots hit on time, keep the machine awake (System Settings → Energy → Prevent automatic sleeping when the display is off, or leave `caffeinate -i` running) or accept that missed slots move forward.
 
 ## Instagram: what is needed now
 
