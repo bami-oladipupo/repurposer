@@ -1,0 +1,10 @@
+# Copy to overrides.yaml. Keyed by tiktok_id. Checked before every publish, so edits take effect
+# on the next worker run without a restart.
+#
+# action: hold     -> never publishes until you change or remove the entry
+# action: skip     -> never publishes, both platforms marked skipped
+# action: publish  -> clears a hold and lets the scheduler pick it up again
+7412345678901234567:
+  action: hold
+  yt_title: "Custom title"
+  ig_caption: "Custom caption"

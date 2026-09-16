@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Account settings · Repurposer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1><svg class="i lg"><use href="#i-gear"/></svg>Account settings <span class="info-dot" title="Source account and timing shared by both workflows.">i</span></h1>
+</div>
+{% if saved %}<div class="notice ok"><svg class="i"><use href="#i-check"/></svg>Saved.</div>{% endif %}
+{% if error %}<div class="notice danger"><svg class="i"><use href="#i-info"/></svg>{{ error }}</div>{% endif %}
+<form method="post" action="/settings" class="card">
+  <div class="head"><div><h2>Source</h2><div class="sub">The TikTok account both workflows watch.</div></div></div>
+  <div class="pad">
+    <label>TikTok account <input type="text" value="{{ handle }}" disabled style="max-width: 280px"></label>
+    <p class="hint" style="margin-top: 6px">Set in config.yaml as source.tiktok_handle. It is deliberately not editable here.</p>
+  </div>
+  <div class="head"><div><h2>Timing</h2><div class="sub">Applies to every time shown or entered in this app.</div></div></div>
+  <div class="pad" style="display: grid; gap: var(--s4)">
+    <label>Timezone <input type="text" name="timezone" value="{{ values.timezone }}" style="max-width: 280px" list="tz-list">
+      <datalist id="tz-list"><option value="Europe/London"><option value="Europe/Lagos"><option value="America/New_York"><option value="UTC"></datalist></label>
+    <div class="grid-2">
+      <label>Minimum age before repost, minutes <input type="number" name="min_age_minutes" min="0" value="{{ values.min_age_minutes }}">
+        <span class="hint">Your window to delete a TikTok before it is cross-posted anywhere.</span></label>
+      <label>First-run lookback, days <input type="number" name="lookback_days" min="1" value="{{ values.lookback_days }}">
+        <span class="hint">Only used the first time the worker runs.</span></label>
+    </div>
+  </div>
+  <div class="head"><div><h2>Alerts</h2></div></div>
+  <div class="pad">
+    <p class="small">Sent by <span class="pill">{{ cfg.notify.method }}</span>{% if cfg.notify.quiet_when_idle %} quiet when nothing happened{% endif %}.</p>
+    <p class="hint" style="margin-top: 6px">Change the method in config.yaml and the credentials in .env.</p>
+  </div>
+  <div class="form-foot"><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,67 @@
+# Seeds the database on first run. After that, workflow settings and slots are edited in the web
+# UI and the database wins. Change source, paths and notify here; they are read on every run.
+# Secrets live in .env only.
+
+source:
+  tiktok_handle: "@itsbami_"
+  lookback_days: 7            # first run only pulls this window
+  min_age_minutes: 60         # do not repost until the TikTok post is this old
+  poll_max_items: 30          # newest N profile entries checked per run (pinned videos count)
+
+youtube:
+  enabled: true
+  privacy: "public"           # API compliance audit passed 2026-09-03; public uploads honoured
+  title_template: "{caption_first_line}"
+  description_template: "{caption}\n\n{yt_hashtags}"
+  hashtags: ["#Shorts"]       # add your own; #Shorts keeps it on the Shorts shelf
+  category_id: "27"           # Education
+  made_for_kids: false
+
+instagram:
+  enabled: false              # switch on once the account is a Creator account and connected
+  caption_template: "{caption}\n.\n.\n{ig_hashtags}"
+  hashtags: []
+  share_to_feed: true
+
+publish:
+  mode: "schedule"            # asap | schedule | manual
+  timezone: "Europe/London"
+  delay_minutes:              # stagger per platform, added to min_age_minutes. 0 = immediate
+    youtube: 0
+    instagram: 0
+  default_slots:              # seed the slots table; edit in the UI afterwards
+    youtube:   ["10:00", "18:00"]
+    instagram: ["11:00", "19:00"]
+
+existing_content:
+  enabled: true
+  start_from: "2026-09-08"    # first slot date for backfill; new content always takes priority
+  order: "newest_first"       # newest_first | oldest_first
+  include_before: null        # ISO date; null means the whole catalogue
+  exclude_if_caption_contains:
+    - "#ad"
+    - "#sponsored"
+    - "#gifted"
+    - "#partner"
+    - "#collab"
+    - "paid partnership"
+    - "paid promotion"
+    - "Kaplan"
+
+limits:
+  max_duration_s: 180         # anything longer is skipped on both platforms
+  ig_max_duration_s: 90       # Reels via API cap; longer videos go YouTube only
+  backfill_download_hours: 24 # download backfill videos only this close to their slot
+  min_free_disk_gb: 2
+  retry_runs: 3               # failed publishes retried on the next N runs
+
+rewrite:                      # titles and captions rewritten by Claude; switch on per workflow in the UI
+  model: "claude-opus-5"
+  effort: "medium"            # low | medium | high
+  max_per_run: 20             # cap on API calls per worker run
+
+overrides_file: "overrides.yaml"
+
+notify:
+  method: "telegram"          # telegram | email | stdout
+  quiet_when_idle: true       # send nothing when a run had nothing to do and no failures

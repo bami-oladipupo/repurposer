@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Runs · Repurposer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1><svg class="i lg"><use href="#i-activity"/></svg>Runs <span class="info-dot" title="One row per worker execution. Rows with problems are tinted and expand to the full error text.">i</span></h1>
+</div>
+<div class="card">
+  <div class="head"><div><h2>Worker runs</h2><div class="sub">Every 15 minutes, plus anything you trigger from the app.</div></div></div>
+{% if rows %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>Started</th><th class="hide-m">Kind</th><th>Seen</th><th>Published</th><th>Problems</th><th class="hide-m">Log</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  {% set d = r.detail %}
+  {% set problems = d.failed or d.stage_errors or d.alerts or d.needs_attention %}
+  <tr class="{{ 'has-failures' if r.failures or problems }}">
+    <td class="mono">{{ r.run_id }}</td>
+    <td class="nowrap">{{ r.started | local('%d %b %H:%M') }}{% if not r.finished %}<div><span class="pill running">running</span></div>{% endif %}</td>
+    <td class="hide-m muted">{{ RUN_KIND.get(r.kind, r.kind) }}</td>
+    <td class="mono">{{ r.videos_seen }}</td>
+    <td class="mono">{{ r.videos_published }}{% if d.published %}<details class="run"><summary class="small muted"><span class="chev">›</span>which</summary>
+        <pre class="log">{% for p in d.published %}<a href="/content?platform={{ p[1] }}&q={{ p[0] }}">{{ p[0] }}</a> {{ LABEL.get(p[1], p[1]) }} {{ p[2] or '' }}
+{% endfor %}</pre></details>{% endif %}</td>
+    <td>
+      {% if r.failures or problems %}<span class="pill failed">{{ r.failures or 'see detail' }}</span>
+      <details class="run" open><summary class="small muted"><span class="chev">›</span>detail</summary>
+        <pre class="log">{% for f in d.failed %}<span class="problem-line">FAILED</span> <a href="/content?platform={{ f[1] }}&q={{ f[0] }}">{{ f[0] }}</a> {{ LABEL.get(f[1], f[1]) }}
+  {{ f[2] }}
+{% endfor %}{% for s in d.stage_errors %}<span class="problem-line">STAGE {{ s[0] }}</span>
+  {{ s[1] }}
+{% endfor %}{% for a in d.alerts %}<span class="problem-line">ALERT</span> {{ a }}
+{% endfor %}{% for n in d.needs_attention %}<span class="problem-line">NEEDS ATTENTION</span> <a href="/content?platform={{ n[1] }}&q={{ n[0] }}">{{ n[0] }}</a> {{ LABEL.get(n[1], n[1]) }}: {{ n[2] }}
+{% endfor %}</pre>
+      </details>
+      {% elif d.notes %}<details class="run"><summary class="small muted"><span class="chev">›</span>notes</summary><pre class="log">{% for n in d.notes %}{{ n }}
+{% endfor %}</pre></details>
+      {% elif r.finished %}<span class="faint">—</span>{% endif %}
+    </td>
+    <td class="hide-m">{% if r.log_name %}<a class="link" href="/logs/{{ r.log_name }}" target="_blank">log</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty"><span class="ill"><svg class="i lg"><use href="#i-activity"/></svg></span><h2>No runs yet</h2><p>The worker writes a row here every time it runs, whether or not anything happened.</p></div>
+{% endif %}
+</div>
+{% if jobs %}
+<div class="card">
+  <div class="head"><div><h2>Jobs raised from this app</h2><div class="sub">Publish now, Get latest content and catalogue imports.</div></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>Kind</th><th>Video</th><th>Platform</th><th>Raised</th><th>Result</th></tr></thead>
+    <tbody>{% for j in jobs %}<tr class="{{ 'has-failures' if j.finished_at and not j.ok }}">
+      <td class="mono">{{ j.id }}</td><td>{{ RUN_KIND.get(j.kind, j.kind) }}</td>
+      <td class="mono">{% if j.tiktok_id %}<a href="/content?platform={{ j.platform or 'youtube' }}&q={{ j.tiktok_id }}">{{ j.tiktok_id }}</a>{% endif %}</td>
+      <td>{{ LABEL.get(j.platform, j.platform or '') }}</td>
+      <td class="muted">{{ j.created_at | rel }}</td>
+      <td>{% if j.finished_at %}{% if j.ok %}<span class="pill uploaded">done</span>{% else %}<span class="pill failed">failed</span>{% if j.error %}<div class="err">{{ j.error }}</div>{% endif %}{% endif %}{% elif j.started_at %}<span class="pill running">running</span>{% else %}<span class="pill">pending</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+{% endblock %}

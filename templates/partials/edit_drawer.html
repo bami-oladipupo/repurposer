@@ -1,0 +1,48 @@
+<div class="head">
+  <div class="status">
+    <h2><span class="mark {{ row.px }}">{{ row.px | upper }}</span>{{ LABEL[row.platform] }} post</h2>
+    <span class="pill {{ row.pill }}">{{ STATUS_LABEL.get(row.pill, row.pill) }}</span>
+  </div>
+  <button class="btn icon ghost" type="button" onclick="closeDrawer()" aria-label="Close"><svg class="i lg"><use href="#i-x"/></svg></button>
+</div>
+{% if row.p_error %}<div class="notice danger" style="margin:0; display:grid"><b>{{ 'Last attempt failed' if row.p_status == 'failed' else 'Skipped' }}</b><span class="err" style="color:inherit">{{ row.p_error }}</span></div>{% endif %}
+{% if row.status_reason and row.status in ('held','skipped') %}<div class="notice warn" style="margin:0"><svg class="i"><use href="#i-info"/></svg>{{ row.status_reason }}</div>{% endif %}
+{% if row.has_file %}<video controls preload="metadata" src="/media/{{ row.tiktok_id }}.mp4"{% if row.thumb %} poster="{{ row.thumb }}"{% endif %}></video>
+{% elif row.thumb %}<img src="{{ row.thumb }}" alt="" style="max-height: 320px; width: auto; border-radius: 10px">
+{% else %}<p class="hint">Not downloaded yet. The file arrives once the video is within a day of its slot.</p>{% endif %}
+<div class="source">
+  <h3>TikTok caption</h3>
+  <p class="small muted">{{ row.tiktok_caption }}</p>
+  <p class="small faint">{% if row.link %}<a class="link" href="{{ row.link }}" target="_blank" rel="noopener">Open on {{ LABEL[row.platform] }}</a> · {% endif %}<a href="{{ row.tiktok_url }}" target="_blank" rel="noopener" class="mono">{{ row.tiktok_id }}</a>{% if row.duration_s %} · {{ row.duration_s | round | int }}s{% endif %} · posted {{ row.published_at | local('%d %b %Y') }}</p>
+</div>
+<form data-drawer-form hx-post="/videos/{{ row.tiktok_id }}/edit" hx-target="#row-{{ row.tiktok_id }}" hx-swap="outerHTML" class="stack">
+  <input type="hidden" name="platform" value="{{ row.platform }}">
+  {% if row.platform == 'youtube' %}
+  <label>Title <input type="text" name="yt_title" value="{{ fields.yt_title }}" maxlength="100"></label>
+  <label>Description <textarea name="yt_description" rows="6">{{ fields.yt_description }}</textarea></label>
+  {% else %}
+  <label>Caption <textarea name="ig_caption" rows="8" maxlength="2200">{{ fields.ig_caption }}</textarea></label>
+  {% endif %}
+  {% if row.rewrite_status == 'failed' %}<p class="err">Rewrite failed, template shown: {{ row.rewrite_error }}</p>{% elif row.rewrite_status == 'done' %}<p class="hint">Text written by Claude {{ row.rewritten_at | rel }}.</p>{% endif %}
+  {% if row.p_status != 'uploaded' %}
+  <label>Publish at, {{ tz }} <input type="datetime-local" name="scheduled_for" value="{{ sched_value }}" style="width:auto">
+    <span class="hint">Blank keeps the current slot or leaves it to the scheduler.</span></label>
+  {% endif %}
+  <div class="sticky-actions btn-row">
+    {% if rewrite_on and row.p_status != 'uploaded' %}
+      {% if rewrite_key %}<button class="btn ghost" type="button" hx-post="/videos/{{ row.tiktok_id }}/rewrite?platform={{ row.platform }}" hx-target="#drawer .panel" hx-swap="innerHTML">Rewrite with Claude</button>
+      {% else %}<span class="hint">Rewrite needs ANTHROPIC_API_KEY in .env</span>{% endif %}
+    {% endif %}
+    <button class="btn" type="submit">Save</button>
+    {% if row.can_publish %}<button class="btn primary" type="submit" name="publish_now" value="1" hx-confirm="Save and publish to {{ LABEL[row.platform] }} now?">Save and publish now</button>{% endif %}
+  </div>
+</form>
+{% if row.can_hold or row.can_cancel or row.can_requeue or row.can_release %}
+<div class="secondary">
+  <span class="lbl">Also</span>
+  {% if row.can_release %}<button class="btn sm" data-drawer-action hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/release" hx-swap="none">Release from hold</button>{% endif %}
+  {% if row.can_hold %}<button class="btn sm ghost" data-drawer-action hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/hold" hx-swap="none">Hold</button>{% endif %}
+  {% if row.can_requeue %}<button class="btn sm ghost" data-drawer-action hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/requeue" hx-swap="none">Re-add to schedule</button>{% endif %}
+  {% if row.can_cancel %}<button class="btn sm ghost danger" data-drawer-action hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/cancel" hx-swap="none" hx-confirm="Cancel the {{ LABEL[row.platform] }} post? You can re-add it later.">Cancel post</button>{% endif %}
+</div>
+{% endif %}

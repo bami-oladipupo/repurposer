@@ -1,0 +1,46 @@
+{% set connected = card.connection and card.connection.healthy %}
+<section class="wf {{ '' if card.wf.enabled else 'disabled' }}" id="wf-{{ card.platform }}">
+  <div>
+    <div class="route">
+      <span class="mark tt">TT</span> TikTok
+      <span class="dash">------&gt;</span>
+      <span class="mark {{ PREFIX[card.platform] }}">{{ PREFIX[card.platform] | upper }}</span> {{ LABEL[card.platform] }}
+    </div>
+    <div class="sub">
+      {% if not card.wf.enabled %}Inactive. The worker ignores this route.
+      {% elif not connected %}<span style="color: var(--danger)">Not connected.</span> Connect {{ LABEL[card.platform] }} to start publishing.
+      {% elif not card.wf.auto_publish %}Manual. Slots are kept but nothing publishes until you press Publish now.
+      {% elif card.next %}Next post <b>{{ card.next | local }}</b>
+      {% elif card.counts.queued %}<b>{{ card.counts.queued }}</b> waiting for a slot.
+      {% else %}Nothing queued. New TikToks are picked up automatically.{% endif %}
+      · {{ 'On a schedule' if card.wf.mode == 'schedule' else 'As soon as possible' }}
+      · {{ 'New and back catalogue' if card.wf.content_scope == 'new_and_existing' else 'New content only' }}
+      {% if connected %}· {{ card.connection.account_name }}{% endif %}
+    </div>
+  </div>
+  <div class="ctrl">
+    <button class="switch {{ 'on' if card.wf.auto_publish }}" type="button" title="{{ 'Auto Publish is on: posts go out at their slot without you' if card.wf.auto_publish else 'Auto Publish is off: slots are kept, nothing publishes until you say so' }}"
+      hx-post="/workflows/{{ card.platform }}/auto" hx-vals='{"on":"{{ '0' if card.wf.auto_publish else '1' }}"}' hx-target="#wf-{{ card.platform }}" hx-swap="outerHTML">
+      Auto Publish <span class="knob"></span>
+    </button>
+    {% if card.wf.enabled %}<span class="pill active">Active</span>{% else %}<span class="pill">Inactive</span>{% endif %}
+    <a class="stat" href="/content?platform={{ card.platform }}&status=scheduled" title="Scheduled"><span class="num">{{ card.counts.scheduled }}</span> scheduled</a>
+    <a class="stat" href="/content?platform={{ card.platform }}&status=uploaded" title="Published"><span class="num">{{ card.counts.published }}</span> published</a>
+    {% if card.counts.failed %}<a class="stat alert" href="/content?platform={{ card.platform }}&status=failed"><span class="num">{{ card.counts.failed }}</span> failed</a>{% endif %}
+    {% if card.counts.held %}<a class="stat" href="/content?platform={{ card.platform }}&status=held"><span class="num">{{ card.counts.held }}</span> held</a>{% endif %}
+    {% if not connected %}<a class="btn primary sm" href="/connections">Connect</a>{% endif %}
+    <a class="btn sm" href="/content?platform={{ card.platform }}"><svg class="i"><use href="#i-ext"/></svg>View workflow</a>
+    <span class="menu">
+      <button class="kebab" type="button" aria-label="More" onclick="this.parentElement.classList.toggle('open')"><svg class="i"><use href="#i-more"/></svg></button>
+      <span class="pop">
+        <a href="/workflows/{{ card.platform }}/settings"><svg class="i"><use href="#i-gear"/></svg>Settings</a>
+        <a href="/content?platform={{ card.platform }}&status=held"><svg class="i"><use href="#i-film"/></svg>Held content ({{ card.counts.held }})</a>
+        {% if card.wf.enabled %}
+        <button hx-post="/workflows/{{ card.platform }}/enabled" hx-vals='{"on":"0"}' hx-target="#wf-{{ card.platform }}" hx-swap="outerHTML" class="danger"><svg class="i"><use href="#i-x"/></svg>Deactivate workflow</button>
+        {% else %}
+        <button hx-post="/workflows/{{ card.platform }}/enabled" hx-vals='{"on":"1"}' hx-target="#wf-{{ card.platform }}" hx-swap="outerHTML"><svg class="i"><use href="#i-check"/></svg>Activate workflow</button>
+        {% endif %}
+      </span>
+    </span>
+  </div>
+</section>

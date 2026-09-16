@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Workflows · Repurposer{% endblock %}
+{% block content %}
+{% if last_run %}
+<div class="notice ok"><svg class="i"><use href="#i-check"/></svg>Last run #{{ last_run.run_id }} {{ last_run.started | rel }}: {{ last_run.videos_published }} published, {{ last_run.failures }} problem{{ '' if last_run.failures == 1 else 's' }}. <a href="/runs">See runs</a></div>
+{% else %}
+<div class="notice warn"><svg class="i"><use href="#i-info"/></svg>No worker runs yet. Press Get latest content or wait for the schedule.</div>
+{% endif %}
+<div class="page-head">
+  <h1><svg class="i lg"><use href="#i-zap"/></svg>Workflows <span class="info-dot" title="One TikTok source, one destination each. The worker checks every 15 minutes.">i</span></h1>
+  <div class="actions">
+    <button class="btn" type="button" onclick="document.getElementById('import-dialog').showModal()"><svg class="i"><use href="#i-download"/></svg>Import catalogue</button>
+    <button class="btn primary" hx-post="/workflows/run-now" hx-swap="none"><svg class="i"><use href="#i-refresh"/></svg>Get latest content</button>
+  </div>
+</div>
+<div class="card">
+  <div class="filterbar">
+    <span class="dd"><svg class="i lead"><use href="#i-filter"/></svg>All workflows</span>
+    <span class="faint small">{{ cards | length }} workflow{{ '' if cards | length == 1 else 's' }}</span>
+  </div>
+  {% for card in cards %}
+    {% include "partials/workflow_card.html" %}
+  {% endfor %}
+</div>
+<dialog id="import-dialog" class="dlg">
+  <form hx-post="/workflows/import" hx-swap="none" hx-on::after-request="if(event.detail.successful) this.closest('dialog').close()">
+    <h2>Import back catalogue</h2>
+    <p class="small muted">Older TikToks are added as catalogue content and take the slots that new posts leave free. Sponsored posts are held automatically. Safe to run again, nothing is duplicated.</p>
+    <label>How many videos back
+      <input type="number" name="limit" min="1" step="1" placeholder="Everything" inputmode="numeric" autofocus>
+      <span class="hint">Newest first, as TikTok lists them. Pinned videos count towards the number. Leave blank for the whole profile.</span></label>
+    <div class="btn-row" style="justify-content: flex-end; margin-top: var(--s2)">
+      <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <button class="btn primary" type="submit"><svg class="i"><use href="#i-download"/></svg>Import</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

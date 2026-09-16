@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Content · Repurposer{% endblock %}
+{% set qs = '&origin=' ~ origin ~ '&q=' ~ (q | urlencode) %}
+{% set wf = workflows[platform] %}
+{% set conn = connections.get(platform) %}
+{% set connected = conn and conn.healthy %}
+{% block content %}
+<div class="page-head">
+  <h1><svg class="i lg"><use href="#i-film"/></svg>TikTok to {{ LABEL[platform] }} <span class="info-dot" title="Every TikTok the worker has seen, with its {{ LABEL[platform] }} status. Tap a caption to edit the post.">i</span></h1>
+  <div class="actions">
+    <span class="seg" role="group" aria-label="Workflow">
+      {% for p in PLATFORMS %}<a href="/content?platform={{ p }}&status={{ status }}{{ qs }}" class="{{ 'on' if p == platform else '' }}">{{ LABEL[p] }}</a>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="pad">
+    <div class="route-head">
+      <span class="acct"><span class="mark tt">TT</span>{{ handle }}</span>
+      <span class="arrow">⟶</span>
+      <span class="acct"><span class="mark {{ PREFIX[platform] }}">{{ PREFIX[platform] | upper }}</span>{% if connected %}{{ conn.account_name }}{% else %}<span>not connected</span>{% endif %}</span>
+      <span class="right">
+        <button class="switch {{ 'on' if wf.auto_publish }}" type="button" hx-post="/workflows/{{ platform }}/auto" hx-vals='{"on":"{{ '0' if wf.auto_publish else '1' }}"}' hx-swap="none" hx-on::after-request="location.reload()">Auto Publish <span class="knob"></span></button>
+        <a class="btn" href="/workflows/{{ platform }}/settings"><svg class="i"><use href="#i-gear"/></svg>Settings</a>
+      </span>
+    </div>
+    <div style="margin-top: var(--s3)">
+      <div class="info-line"><svg class="i"><use href="#i-info"/></svg><span>
+        {% if not wf.enabled %}This workflow is inactive. Activate it on <a class="link" href="/workflows">Workflows</a> to resume.
+        {% elif not connected %}{{ LABEL[platform] }} is not connected, so nothing can publish. <a class="link" href="/connections">Connect it</a>.
+        {% elif wf.auto_publish %}New TikToks are repurposed to {{ LABEL[platform] }} automatically{% if wf.mode == 'schedule' %} at your weekly slots{% else %} as soon as they are {{ min_age }} minutes old{% endif %}.
+        {% else %}Auto Publish is off. Posts are scheduled but wait for you to press Publish now.{% endif %}
+      </span></div>
+      <div class="info-line"><svg class="i"><use href="#i-info"/></svg><span>{{ LABEL[platform] }} accepts vertical videos up to 3 minutes. Sponsored posts are held automatically.</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="head">
+    <div><h2>Content</h2><div class="sub">{{ total }} TikTok{{ '' if total == 1 else 's' }} seen{% if last_run %} · Last checked {{ last_run.started | rel }} · <a class="link" hx-post="/workflows/run-now" hx-swap="none">Check now</a>{% endif %}</div></div>
+  </div>
+  <div class="stats">
+    <a href="/content?platform={{ platform }}{{ qs }}" class="{{ 'on' if not status }}">All</a>
+    <a href="/content?platform={{ platform }}&status=scheduled{{ qs }}" class="{{ 'on' if status == 'scheduled' }}">Scheduled <span class="num">{{ counts.scheduled }}</span></a>
+    <a href="/content?platform={{ platform }}&status=queued{{ qs }}" class="{{ 'on' if status == 'queued' }}">Queued <span class="num">{{ counts.queued }}</span></a>
+    <a href="/content?platform={{ platform }}&status=uploaded{{ qs }}" class="{{ 'on' if status == 'uploaded' }}">Published <span class="num">{{ counts.published }}</span></a>
+    <a href="/content?platform={{ platform }}&status=failed{{ qs }}" class="{{ 'on' if status == 'failed' }} {{ 'alert' if counts.failed }}">Failed <span class="num">{{ counts.failed }}</span></a>
+    <a href="/content?platform={{ platform }}&status=held{{ qs }}" class="{{ 'on' if status == 'held' }}">Held <span class="num">{{ counts.held }}</span></a>
+    <a href="/content?platform={{ platform }}&status=skipped{{ qs }}" class="{{ 'on' if status == 'skipped' }}">Skipped</a>
+    <a href="/content?platform={{ platform }}&status=cancelled{{ qs }}" class="{{ 'on' if status == 'cancelled' }}">Cancelled</a>
+  </div>
+  <form class="filterbar" method="get" action="/content">
+    <input type="hidden" name="platform" value="{{ platform }}"><input type="hidden" name="status" value="{{ status }}">
+    <label class="search" aria-label="Search content"><svg class="i"><use href="#i-search"/></svg><input type="search" name="q" value="{{ q }}" placeholder="Search content…" enterkeyhint="search"></label>
+    <span class="right">
+      <span class="dd"><svg class="i lead"><use href="#i-filter"/></svg>{{ {'': 'All content', 'new': 'New content', 'existing': 'Back catalogue'}[origin] }}
+        <select name="origin" onchange="this.form.submit()" aria-label="Origin">
+          <option value="" {{ 'selected' if not origin }}>All content</option>
+          <option value="new" {{ 'selected' if origin == 'new' }}>New content</option>
+          <option value="existing" {{ 'selected' if origin == 'existing' }}>Back catalogue</option>
+        </select>
+      </span>
+      {% if q %}<a class="btn ghost sm" href="/content?platform={{ platform }}&status={{ status }}&origin={{ origin }}">Clear</a>{% endif %}
+    </span>
+  </form>
+  {% if edit %}<div hx-get="/videos/{{ edit }}/edit?platform={{ platform }}" hx-trigger="load" hx-target="#drawer .panel" hx-swap="innerHTML"></div>{% endif %}
+  {% if rows %}
+    {% for row in rows %}{% include "partials/content_row.html" %}{% endfor %}
+  {% else %}
+  <div class="empty">
+    <span class="ill"><svg class="i lg"><use href="#i-film"/></svg></span>
+    <h2>{% if total == 0 %}No content yet{% else %}Nothing matches{% endif %}</h2>
+    {% if total == 0 %}
+    <p>The worker has not seen any TikToks. <a hx-post="/workflows/run-now" hx-swap="none" class="link">Get latest content</a> polls the last few days, or Import catalogue on Workflows brings in the whole back catalogue.</p>
+    {% else %}<p>No {{ LABEL[platform] }} posts match these filters. <a href="/content?platform={{ platform }}">Show everything</a>.</p>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Calendar · Repurposer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1><svg class="i lg"><use href="#i-cal"/></svg>Calendar <span class="info-dot" title="Every scheduled, published and failed post. Drag a scheduled post to another day, or tap it to edit.">i</span></h1>
+</div>
+<div class="card">
+  <div class="cal-head">
+    <span class="seg" role="group" aria-label="View">
+      {% for v in ['month','week','day'] %}<a href="/calendar?view={{ v }}&d={{ anchor.isoformat() }}" class="{{ 'on' if v == view }}">{{ v | capitalize }}</a>{% endfor %}
+    </span>
+    <h2>{{ title }}</h2>
+    <a class="btn ghost sm" href="/calendar?view={{ view }}">Today</a>
+    <a class="btn icon" href="/calendar?view={{ view }}&d={{ prev_d }}" aria-label="Previous"><svg class="i"><use href="#i-chev-l"/></svg></a>
+    <a class="btn icon" href="/calendar?view={{ view }}&d={{ next_d }}" aria-label="Next"><svg class="i"><use href="#i-chev-r"/></svg></a>
+  </div>
+  <div class="legend">
+    <span><span class="key solid"></span>published</span>
+    <span><span class="key"></span>scheduled</span>
+    <span><span class="key fail"></span>failed</span>
+    <span class="drag-hint">Drag a scheduled post to another day. Click a post to edit it.</span>
+  </div>
+  <div class="cal {{ view }}" style="margin-top: var(--s2)">
+    {% if view != 'day' %}{% for d in WEEKDAYS %}<div class="dow">{{ d }}</div>{% endfor %}{% endif %}
+    {% for day in days %}
+    <div class="cell {{ 'out' if view == 'month' and day.month != month }} {{ 'today' if day == today }} {{ 'week' if view == 'week' }} {{ 'dayview' if view == 'day' }}" data-day="{{ day.isoformat() }}">
+      <span class="dnum">{{ day.strftime('%a %d %b') if view == 'day' else day.day }}</span>
+      {% for e in entries.get(day, []) %}
+      {% set movable = e.p_status in ('scheduled', 'failed') %}
+      <div class="ev {{ e.p_status }}" draggable="{{ 'true' if movable else 'false' }}" data-id="{{ e.tiktok_id }}" data-platform="{{ e.platform }}" data-day="{{ day.isoformat() }}"
+        hx-get="/videos/{{ e.tiktok_id }}/edit?platform={{ e.platform }}" hx-target="#drawer .panel" hx-swap="innerHTML"
+        title="{{ e.when_local.strftime('%H:%M') }} {{ LABEL[e.platform] }}: {{ e.tiktok_caption | short(120) }}">
+        {% if e.thumb %}<img src="{{ e.thumb }}" alt="" loading="lazy">{% else %}<span class="mark {{ e.px }}">{{ e.px | upper }}</span>{% endif %}
+        <span><span class="t">{{ e.when_local.strftime('%H:%M') }} {{ e.px | upper }}</span><span class="cap">{{ e.tiktok_caption | short(80) or e.tiktok_id }}</span></span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

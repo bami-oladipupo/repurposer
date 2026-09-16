@@ -1,0 +1,40 @@
+{% set edit_url = '/videos/' ~ row.tiktok_id ~ '/edit?platform=' ~ row.platform %}
+<div class="item" id="row-{{ row.tiktok_id }}" {% if row.polling %}hx-get="/content/row/{{ row.tiktok_id }}?platform={{ row.platform }}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+  <a class="thumb {{ '' if row.thumb else 'blank' }}" hx-get="{{ edit_url }}" hx-target="#drawer .panel" hx-swap="innerHTML">
+    {% if row.thumb %}<img src="{{ row.thumb }}" alt="" loading="lazy">{% else %}no img{% endif %}
+    {% if row.duration_s %}<span class="dur">{{ '%02d:%02d' % ((row.duration_s // 60) | int, (row.duration_s % 60) | int) }}</span>{% endif %}
+  </a>
+  <div class="body" hx-get="{{ edit_url }}" hx-target="#drawer .panel" hx-swap="innerHTML">
+    <div class="cap" title="{{ row.tiktok_caption }}">{{ row.tiktok_caption or '(no caption)' }}</div>
+    <div class="meta">
+      <span>{{ row.published_at | local('%d %b %Y | %H:%M') }}</span>
+      <a href="{{ row.tiktok_url }}" target="_blank" rel="noopener" hx-disable class="mono" title="Open on TikTok">{{ row.tiktok_id }}</a>
+      {% if row.origin == 'existing' %}<span class="pill">catalogue</span>{% endif %}
+    </div>
+    <div class="state">
+      <span class="pill {{ row.pill }}">{{ STATUS_LABEL.get(row.pill, row.pill) }}</span>
+      {% if row.p_status == 'uploaded' %}<span class="small faint">{{ row.p_published_at | local }}</span>
+      {% elif row.p_scheduled_for %}<span class="small faint"><svg class="i" style="width:12px;height:12px;vertical-align:-2px"><use href="#i-clock"/></svg> {{ row.p_scheduled_for | local }} · {{ row.p_scheduled_for | rel }}</span>{% endif %}
+      {% if row.p_attempts and row.p_status == 'failed' %}<span class="faint mono">×{{ row.p_attempts }}</span>{% endif %}
+      {% if row.link %}<a href="{{ row.link }}" target="_blank" rel="noopener" hx-disable class="link small">Open post <svg class="i" style="width:12px;height:12px;vertical-align:-2px"><use href="#i-ext"/></svg></a>{% endif %}
+    </div>
+    {% if row.status in ('held','skipped') and row.status_reason %}<div class="reason">{{ row.status_reason }}</div>{% endif %}
+    {% if row.p_error and row.p_status in ('failed','skipped') %}<div class="err">{{ row.p_error }}</div>{% endif %}
+  </div>
+  <div class="act">
+    {% if row.can_release %}<button class="btn primary sm" hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/release" hx-target="#row-{{ row.tiktok_id }}" hx-swap="outerHTML">Release</button>
+    {% elif row.can_publish %}<button class="btn primary sm" hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/publish-now" hx-target="#row-{{ row.tiktok_id }}" hx-swap="outerHTML" hx-confirm="Publish “{{ row.tiktok_caption | short(50) }}” to {{ LABEL[row.platform] }} now?">Publish now</button>
+    {% elif row.can_requeue %}<button class="btn sm" hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/requeue" hx-target="#row-{{ row.tiktok_id }}" hx-swap="outerHTML">Re-add</button>{% endif %}
+    <button class="btn sm {{ 'hide-m' if row.can_release or row.can_publish or row.can_requeue }}" hx-get="{{ edit_url }}" hx-target="#drawer .panel" hx-swap="innerHTML">Edit</button>
+    {% if row.can_hold or row.can_cancel %}
+    <span class="menu hide-m">
+      <button class="kebab" type="button" aria-label="More" onclick="this.parentElement.classList.toggle('open')"><svg class="i"><use href="#i-more"/></svg></button>
+      <span class="pop">
+        <button hx-get="{{ edit_url }}" hx-target="#drawer .panel" hx-swap="innerHTML"><svg class="i"><use href="#i-gear"/></svg>Edit and reschedule</button>
+        {% if row.can_hold %}<button hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/hold" hx-target="#row-{{ row.tiktok_id }}" hx-swap="outerHTML"><svg class="i"><use href="#i-clock"/></svg>Hold</button>{% endif %}
+        {% if row.can_cancel %}<button class="danger" hx-post="/videos/{{ row.tiktok_id }}/{{ row.platform }}/cancel" hx-target="#row-{{ row.tiktok_id }}" hx-swap="outerHTML" hx-confirm="Cancel the {{ LABEL[row.platform] }} post for “{{ row.tiktok_caption | short(50) }}”? You can re-add it later."><svg class="i"><use href="#i-x"/></svg>Cancel post</button>{% endif %}
+      </span>
+    </span>
+    {% endif %}
+  </div>
+</div>

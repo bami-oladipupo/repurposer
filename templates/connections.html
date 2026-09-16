@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Connections · Repurposer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1><svg class="i lg"><use href="#i-link"/></svg>Connections <span class="info-dot" title="Checked on every worker run. Connect and Reconnect open the platform's sign-in in this window.">i</span></h1>
+  <div class="actions"><button class="btn" hx-post="/connections/check" hx-swap="none"><svg class="i"><use href="#i-refresh"/></svg>Check now</button></div>
+</div>
+{% if msg %}<div class="notice ok"><svg class="i"><use href="#i-check"/></svg>{{ msg }}</div>{% endif %}
+{% if error %}<div class="notice danger"><svg class="i"><use href="#i-info"/></svg>{{ error }}</div>{% endif %}
+<div class="notice warn"><svg class="i"><use href="#i-info"/></svg>If you change the password on a social account, the connection may become inactive and you will need to reconnect it.</div>
+
+<div class="grid-cards">
+  <div class="conn">
+    <div class="top">
+      <span class="mark tt lg">TT</span>
+      <span class="name"><b>TikTok <svg class="i check"><use href="#i-check"/></svg></b><span>{{ handle }}</span></span>
+    </div>
+    <div class="foot"><span>Source account, read from the public profile. No login needed.</span></div>
+  </div>
+  {% for r in rows %}
+  {% set needs_secret = r.platform == 'youtube' and not yt_secret_present %}
+  {% set needs_meta = r.platform == 'instagram' and not ig_app_configured %}
+  <div class="conn">
+    <div class="top">
+      <span class="mark {{ PREFIX[r.platform] }} lg">{{ PREFIX[r.platform] | upper }}</span>
+      <span class="name"><b>{{ LABEL[r.platform] }} {% if r.healthy %}<svg class="i check"><use href="#i-check"/></svg>{% endif %}</b><span>{{ r.account_name or 'not connected' }}{% if r.account_id %} · <span class="mono">{{ r.account_id }}</span>{% endif %}</span></span>
+      <span class="menu">
+        <button class="kebab" type="button" aria-label="More" onclick="this.parentElement.classList.toggle('open')"><svg class="i"><use href="#i-more"/></svg></button>
+        <span class="pop">
+          {% if not needs_secret and not needs_meta %}<a href="/connect/{{ r.platform }}"><svg class="i"><use href="#i-refresh"/></svg>{{ 'Reconnect' if r.account_name else 'Connect' }}</a>{% endif %}
+          <a href="/content?platform={{ r.platform }}"><svg class="i"><use href="#i-film"/></svg>View content</a>
+          <a href="/workflows/{{ r.platform }}/settings"><svg class="i"><use href="#i-gear"/></svg>Workflow settings</a>
+        </span>
+      </span>
+    </div>
+    <div>
+      {% if r.healthy %}<span class="pill healthy">Healthy</span>{% elif r.account_name %}<span class="pill unhealthy">Unhealthy</span>{% else %}<span class="pill">Not connected</span>{% endif %}
+      {% if not r.enabled %}<span class="pill">Workflow inactive</span>{% endif %}
+      {% if r.last_error %}<div class="err" style="margin-top: 6px">{{ r.last_error }}</div>{% endif %}
+    </div>
+    <div class="foot">
+      <span>{% if r.days_left is not none %}Token expires in {{ r.days_left }} days ({{ r.token_expires_at | local('%d %b %Y') }}){% elif r.platform == 'youtube' and r.healthy %}No expiration date{% else %}—{% endif %}{% if r.last_checked %} · checked {{ r.last_checked | rel }}{% endif %}</span>
+      {% if needs_secret %}<a class="btn sm" href="#yt-setup">Set up first</a>
+      {% elif needs_meta %}<a class="btn sm" href="#ig-setup">Set up first</a>
+      {% else %}<a class="btn sm {{ 'primary' if not r.healthy }}" href="/connect/{{ r.platform }}">{{ 'Reconnect' if r.account_name else 'Connect' }}</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card" id="yt-setup" style="margin-top: var(--s5)">
+  <div class="head"><div><h2>YouTube setup</h2><div class="sub">One-time job of about ten minutes. After that, connecting is just a Google login.</div></div></div>
+  <div class="pad" style="display: grid; gap: var(--s4); max-width: 760px">
+    {% if yt_secret_present %}
+    <p class="small muted">Client secret is in place. {% if not rows[0].account_name %}Press <b>Connect</b> above and sign in with the channel's Google account.{% else %}Replace it below only if you create a new OAuth client in Google Cloud.{% endif %}</p>
+    <p class="mono faint">{{ yt_secret_path }}</p>
+    {% else %}
+    <ol class="steps">
+      <li>Open <a class="link" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">console.cloud.google.com/projectcreate</a>, name it anything (Repurposer), Create.</li>
+      <li>APIs and Services → Library → search <b>YouTube Data API v3</b> → Enable.</li>
+      <li>APIs and Services → OAuth consent screen → External → app name Repurposer, your email for both contact fields → Save. Under Audience, press <b>Publish app</b>. <b>Skip this and the login expires after seven days.</b></li>
+      <li>APIs and Services → Credentials → Create credentials → <b>OAuth client ID</b> → type <b>Desktop app</b> → Create → <b>Download JSON</b>.</li>
+      <li>Drop that JSON below, then press Connect. Google shows an "unverified app" screen: Advanced → Go to Repurposer.</li>
+    </ol>
+    <p class="hint">New Google projects can only upload as private until YouTube's API compliance audit is approved. Apply at <a class="link" href="https://support.google.com/youtube/contact/yt_api_form" target="_blank" rel="noopener">the YouTube API services form</a> once the first upload works.</p>
+    {% endif %}
+    <form method="post" action="/connections/youtube/client-secret" enctype="multipart/form-data" style="display: grid; gap: var(--s3)">
+      <label class="drop">
+        <svg class="i lg"><use href="#i-cloud"/></svg>
+        <span>{{ 'Drop a replacement client_secret.json here, or click to choose' if yt_secret_present else 'Drop client_secret.json here, or click to choose' }}</span>
+        <span class="file">No file chosen yet</span>
+        <input type="file" name="file" accept="application/json,.json" required>
+      </label>
+      <div class="btn-row" style="justify-content: flex-end"><button class="btn primary" type="submit"><svg class="i"><use href="#i-upload"/></svg>Save client secret</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card" id="ig-setup">
+  <div class="head"><div><h2>Instagram setup</h2></div></div>
+  <div class="pad">
+    {% if ig_app_configured %}
+    <p class="small muted">Meta app credentials are in .env. Convert the account to a Creator account, then press Connect above.</p>
+    {% else %}
+    <p class="small muted">Needs a Creator account plus IG_APP_ID and IG_APP_SECRET in .env from a Meta developer app. Steps are in the README. Leave the workflow inactive until then.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

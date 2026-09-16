@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}{{ LABEL[platform] }} settings · Repurposer{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/workflows">Workflows</a> / <a href="/content?platform={{ platform }}">TikTok to {{ LABEL[platform] }}</a> / Settings</p>
+    <h1><svg class="i lg"><use href="#i-gear"/></svg>TikTok to {{ LABEL[platform] }} settings</h1>
+  </div>
+</div>
+{% if saved %}<div class="notice ok"><svg class="i"><use href="#i-check"/></svg>Saved. The next worker run uses these settings.</div>{% endif %}
+{% if error %}<div class="notice danger"><svg class="i"><use href="#i-info"/></svg>{{ error }}</div>{% endif %}
+<form method="post" action="/workflows/{{ platform }}/settings" class="card" id="wf-settings">
+  <div class="tabs" role="tablist">
+    <button type="button" class="on" data-tab="publish"><svg class="i"><use href="#i-clock"/></svg>Publish</button>
+    <button type="button" data-tab="content"><svg class="i"><use href="#i-film"/></svg>Content</button>
+    <button type="button" data-tab="dest"><span class="mark {{ PREFIX[platform] }}" style="width:16px;height:16px;font-size:8px">{{ PREFIX[platform] | upper }}</span>{{ LABEL[platform] }} (destination)</button>
+    <button type="button" data-tab="source"><span class="mark tt" style="width:16px;height:16px;font-size:8px">TT</span>TikTok (source)</button>
+  </div>
+
+  <div class="tab-panel on" data-panel="publish">
+    <fieldset>
+      <legend>When to publish</legend>
+      <label class="inline"><input type="radio" name="mode" value="schedule" {{ 'checked' if wf.mode == 'schedule' }}> At the weekly slots below</label>
+      <label class="inline"><input type="radio" name="mode" value="asap" {{ 'checked' if wf.mode == 'asap' }}> As soon as a new TikTok is old enough</label>
+      <label>Extra delay after the TikTok post, minutes
+        <input type="number" name="delay_minutes" min="0" step="15" value="{{ wf.delay_minutes or 0 }}">
+        <span class="hint">Use this to stagger platforms. 0 means no extra wait beyond the minimum age in <a class="link" href="/settings">Account settings</a>.</span></label>
+      <p class="hint">Back-catalogue content always uses the slots, whichever option is chosen, so an import never floods the channel.</p>
+    </fieldset>
+    <fieldset>
+      <legend>Weekly slots</legend>
+      <p class="hint">Times in {{ tz }}. Up to five a day, at least two hours apart. A day with no slots is skipped.</p>
+      <div class="slots">
+        {% for wd in range(7) %}
+        <div class="day {{ 'off' if not grid[wd] }}" data-name="slot_{{ wd }}" data-label="{{ WEEKDAYS[wd] }}"><span>{{ WEEKDAYS[wd] }}</span>
+          <div class="times">
+            {% for t in grid[wd] %}<input type="time" name="slot_{{ wd }}" value="{{ t }}" step="900">{% endfor %}
+            <button type="button" class="btn ghost sm add" aria-label="Add a slot on {{ WEEKDAYS[wd] }}"><svg class="i"><use href="#i-plus"/></svg>Add time</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="slots-tools"><a href="#" id="copy-monday" class="link small">Copy Monday to Tue–Fri</a><span class="hint">Clear a time to remove that slot.</span></div>
+    </fieldset>
+  </div>
+
+  <div class="tab-panel" data-panel="content">
+    <fieldset>
+      <legend>Which content</legend>
+      <label class="inline"><input type="radio" name="content_scope" value="new" {{ 'checked' if wf.content_scope == 'new' }}> New TikToks only</label>
+      <label class="inline"><input type="radio" name="content_scope" value="new_and_existing" {{ 'checked' if wf.content_scope == 'new_and_existing' }}> New TikToks plus the back catalogue</label>
+      <p class="hint">New content always takes the earliest free slot. Catalogue posts fill the rest.</p>
+      <details class="more" {{ 'open' if wf.content_scope == 'new_and_existing' }}>
+        <summary><span class="chev">›</span>Back-catalogue options</summary>
+        <div class="body grid-2">
+          <label>Start posting the catalogue from <input type="date" name="existing_start_from" value="{{ wf.existing_start_from or '' }}"></label>
+          <label>Order <select name="existing_order">
+            <option value="newest_first" {{ 'selected' if wf.existing_order == 'newest_first' }}>Newest first</option>
+            <option value="oldest_first" {{ 'selected' if wf.existing_order == 'oldest_first' }}>Oldest first</option>
+          </select></label>
+          <label>Only the newest N catalogue videos <input type="number" name="existing_limit" min="1" value="{{ wf.existing_limit or '' }}"><span class="hint">Blank means the whole catalogue. Held and skipped videos do not count.</span></label>
+          <label>Only TikToks posted before <input type="date" name="existing_include_before" value="{{ wf.existing_include_before or '' }}"><span class="hint">Optional. Leave blank for the whole catalogue.</span></label>
+        </div>
+      </details>
+    </fieldset>
+    <fieldset>
+      <legend>Content filters</legend>
+      <label>Hold any TikTok whose caption contains one of these words, one per line <textarea name="exclude_keywords">{{ wf.exclude_keywords | join('\n') }}</textarea></label>
+      <p class="hint">Checked when a video is first seen. Sponsored content usually carries usage restrictions, so it waits on the Content page until you release it.</p>
+    </fieldset>
+  </div>
+
+  <div class="tab-panel" data-panel="dest">
+    <fieldset>
+      <legend>{{ 'Title and description' if platform == 'youtube' else 'Caption' }}</legend>
+      {% if platform == 'youtube' %}
+      <label>Title template <input type="text" name="title_template" id="f-title" value="{{ wf.title_template or '' }}"></label>
+      <label>Description template <textarea name="caption_template" id="f-caption">{{ wf.caption_template or '' }}</textarea></label>
+      {% else %}
+      <label>Caption template <textarea name="caption_template" id="f-caption">{{ wf.caption_template or '' }}</textarea></label>
+      {% endif %}
+      <div class="tokens" data-for="#f-caption" aria-label="Insert a placeholder">
+        {% for t in ['{caption}', '{caption_first_line}', '{caption_no_hashtags}', '{yt_hashtags}', '{ig_hashtags}', '{tiktok_url}', '{date}'] %}<button type="button" data-token="{{ t }}">{{ t }}</button>{% endfor %}
+      </div>
+      <p class="hint">Click a placeholder to insert it into the {{ 'description' if platform == 'youtube' else 'caption' }}. Hashtags below are appended after the template.</p>
+      <label>Hashtags, one per line <textarea name="hashtags">{{ wf.hashtags | join('\n') }}</textarea></label>
+      <label class="inline"><input type="checkbox" name="rewrite" value="1" {{ 'checked' if wf.extra.get('rewrite') }}> Rewrite with Claude before publishing</label>
+      <p class="hint">Claude writes the {{ 'title and description' if platform == 'youtube' else 'caption' }} from the TikTok caption using voice.md in the project folder. You can change the result in the editor before it goes out. Needs ANTHROPIC_API_KEY in .env. If a rewrite fails the template is used and the run says so.</p>
+    </fieldset>
+    <fieldset>
+      <legend>{{ 'YouTube options' if platform == 'youtube' else 'Instagram options' }}</legend>
+      {% if platform == 'youtube' %}
+      <div class="grid-2">
+        <label>Visibility <select name="privacy">
+          {% for p in ['public', 'unlisted', 'private'] %}<option value="{{ p }}" {{ 'selected' if wf.extra.get('privacy', 'public') == p }}>{{ p | capitalize }}</option>{% endfor %}
+        </select></label>
+        <label>Category <select name="category_id">
+          {% set cur = wf.extra.get('category_id', '27') %}
+          {% for cid, name in YT_CATEGORIES %}<option value="{{ cid }}" {{ 'selected' if cur == cid }}>{{ name }}</option>{% endfor %}
+          {% if cur not in YT_CATEGORIES | map(attribute=0) | list %}<option value="{{ cur }}" selected>Category {{ cur }}</option>{% endif %}
+        </select></label>
+      </div>
+      <label class="inline"><input type="checkbox" name="made_for_kids" value="1" {{ 'checked' if wf.extra.get('made_for_kids') }}> Made for kids</label>
+      {% else %}
+      <label class="inline"><input type="checkbox" name="share_to_feed" value="1" {{ 'checked' if wf.extra.get('share_to_feed', True) }}> Also share to the feed</label>
+      {% endif %}
+    </fieldset>
+  </div>
+
+  <div class="tab-panel" data-panel="source">
+    <fieldset>
+      <legend>Source</legend>
+      <label>TikTok account <input type="text" value="{{ handle }}" disabled style="max-width: 280px"></label>
+      <p class="hint">Set in config.yaml as source.tiktok_handle. Minimum age before a repost and the timezone are in <a class="link" href="/settings">Account settings</a>.</p>
+    </fieldset>
+    <fieldset>
+      <legend>Sync history</legend>
+      <p class="small muted">Bring older TikToks into the catalogue as existing content, all of them or only the newest few. Sponsored posts are held automatically. Safe to run again, nothing is duplicated.</p>
+      <div><button type="button" class="btn" onclick="document.getElementById('import-dialog').showModal()"><svg class="i"><use href="#i-download"/></svg>Import catalogue</button></div>
+    </fieldset>
+  </div>
+
+  <div class="form-foot">
+    <a class="btn ghost" href="/workflows">Cancel</a>
+    <button class="btn primary" type="submit">Save</button>
+  </div>
+</form>
+<dialog id="import-dialog" class="dlg">
+  <form hx-post="/workflows/import" hx-swap="none" hx-on::after-request="if(event.detail.successful) this.closest('dialog').close()">
+    <h2>Import back catalogue</h2>
+    <p class="small muted">Older TikToks are added as catalogue content and take the slots that new posts leave free. Sponsored posts are held automatically. Safe to run again, nothing is duplicated.</p>
+    <label>How many videos back
+      <input type="number" name="limit" min="1" step="1" placeholder="Everything" inputmode="numeric" autofocus>
+      <span class="hint">Newest first, as TikTok lists them. Pinned videos count towards the number. Leave blank for the whole profile.</span></label>
+    <div class="btn-row" style="justify-content: flex-end; margin-top: var(--s2)">
+      <button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <button class="btn primary" type="submit"><svg class="i"><use href="#i-download"/></svg>Import</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

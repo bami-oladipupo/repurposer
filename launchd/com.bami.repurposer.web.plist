@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.bami.repurposer.web</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/bami/repurpose content/.venv/bin/python</string>
+        <string>/Users/bami/repurpose content/app.py</string>
+    </array>
+    <key>WorkingDirectory</key><string>/Users/bami/repurpose content</string>
+    <key>KeepAlive</key><true/>
+    <key>RunAtLoad</key><true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StandardOutPath</key><string>/Users/bami/repurpose content/logs/launchd-web.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/bami/repurpose content/logs/launchd-web.err.log</string>
+</dict>
+</plist>
