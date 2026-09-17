@@ -179,3 +179,30 @@ def test_dry_run_publishes_nothing(tmp_db, cfg, fake):
 def test_module_for_unknown_platform():
     with pytest.raises(ValueError):
         publishers.module_for("tiktok")
+
+
+def test_burst_guard_requeues_stale_slots_instead_of_posting_late(tmp_db, cfg, fake):
+    """Six slots fell due while the Mac slept. Only fresh ones publish; stale ones get a new slot."""
+    due_video(tmp_db, "fresh", yt_scheduled_for=iso(utcnow() - timedelta(minutes=30)))
+    due_video(tmp_db, "stale1", yt_scheduled_for=iso(utcnow() - timedelta(hours=5)))
+    due_video(tmp_db, "stale2", yt_scheduled_for=iso(utcnow() - timedelta(days=2)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert fake.calls == ["fresh"]
+    assert sorted(out["rolled"]) == ["stale1", "stale2"] and "burst guard" in out["note"]
+    for tid in ("stale1", "stale2"):
+        row = db.get_video(tmp_db, tid)
+        assert row["yt_status"] == "queued" and row["yt_scheduled_for"] is None
+
+
+def test_burst_guard_caps_publishes_per_run(tmp_db, cfg, fake):
+    due_video(tmp_db, "a", yt_scheduled_for=iso(utcnow() - timedelta(minutes=40)))
+    due_video(tmp_db, "b", yt_scheduled_for=iso(utcnow() - timedelta(minutes=20)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert fake.calls == ["a"]  # oldest slot first
+    assert out["rolled"] == ["b"] and db.get_video(tmp_db, "b")["yt_status"] == "queued"
+
+
+def test_burst_guard_does_not_touch_publish_now(tmp_db, cfg, fake):
+    due_video(tmp_db, "old", yt_scheduled_for=iso(utcnow() - timedelta(days=1)))
+    out = publish_due(tmp_db, cfg, "youtube", {}, only="old")
+    assert fake.calls == ["old"] and out["rolled"] == []

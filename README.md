@@ -147,6 +147,7 @@ Per workflow: Settings → Destination → "Rewrite with Claude before publishin
 | Longer than 180 s or not vertical | `skipped` on both platforms after download |
 | Between 90 s and 180 s | YouTube goes ahead, Instagram `skipped` |
 | TikTok deleted before its slot | `skipped`, reason "removed from TikTok" |
+| Worker did not run for hours (Mac asleep) and several slots are overdue | Burst guard: slots more than `max_slot_lag_minutes` (default 120) overdue go back to the queue for a fresh future slot, and at most `max_publish_per_run` (default 1) posts per platform per run; the rest are requeued. Nothing is dropped, and the run summary says what was requeued. Added after 15 September, when six Shorts went out in one run after a three day gap. |
 | Video finished on every active platform | local file deleted at the end of the run, thumbnail kept |
 | Caption matches a hold keyword | `held` until released |
 
