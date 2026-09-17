@@ -189,12 +189,14 @@ _MISSING_TEXT = {
 def pending(conn: sqlite3.Connection, limit: int, platforms: list[str] | None = None) -> list[dict[str, Any]]:
     """Videos that still need a rewrite: active, not held, and either never attempted or already rewritten
     for one platform but missing text for another that has rewriting on (a workflow enabled later).
+    Backfill videos without a slot are left alone so a capped catalogue is not rewritten for nothing.
     Failed rewrites are not retried automatically."""
     platforms = platforms if platforms is not None else enabled_platforms(conn)
     missing = " OR ".join(_MISSING_TEXT[p] for p in platforms if p in _MISSING_TEXT) or "0"
     return db.rows(
         conn,
         f"""SELECT * FROM videos WHERE status IN ('new','downloaded','ready')
+           AND (origin = 'new' OR yt_scheduled_for IS NOT NULL OR ig_scheduled_for IS NOT NULL)
            AND (rewrite_status IS NULL OR (rewrite_status = 'done' AND ({missing})))
            ORDER BY CASE WHEN origin='new' THEN 0 ELSE 1 END,
                     COALESCE(yt_scheduled_for, ig_scheduled_for, '9999') ASC LIMIT ?""",
