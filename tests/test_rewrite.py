@@ -104,7 +104,7 @@ def test_run_rewrites_pending_only_and_skips_held(rewrite_on, make_video, monkey
     make_video(conn, "b", caption="y", status="held")
     make_video(conn, "c", caption="z")
     with db.tx(conn):
-        db.update_video(conn, "c", rewrite_status="done")
+        db.update_video(conn, "c", rewrite_status="done", yt_title="C", yt_description="c", ig_caption="c ig")
     outputs = [{"title": "A", "description": "a"}, {"caption": "a ig"}]
     fake = FakeClient(outputs)
     monkeypatch.setattr(rewrite, "client", lambda: fake)
@@ -121,3 +121,21 @@ def test_run_is_noop_when_no_workflow_has_rewrite(tmp_db, make_video, monkeypatc
     make_video(conn, "a", caption="x")
     monkeypatch.setattr(rewrite, "client", lambda: (_ for _ in ()).throw(AssertionError("must not be called")))
     assert rewrite.run(conn, cfg)["platforms"] == []
+
+
+def test_run_picks_up_platform_enabled_after_first_rewrite(rewrite_on, make_video, monkeypatch):
+    """A video rewritten while only YouTube had rewriting on gets its Instagram caption once Instagram is enabled."""
+    conn, cfg = rewrite_on
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    make_video(conn, "a", caption="x")
+    with db.tx(conn):
+        db.update_video(conn, "a", rewrite_status="done", yt_title="A", yt_description="a")
+    fake = FakeClient([{"caption": "a ig"}])
+    monkeypatch.setattr(rewrite, "client", lambda: fake)
+    stats = rewrite.run(conn, cfg)
+    assert stats["rewritten"] == 1 and stats["failed"] == []
+    row = db.get_video(conn, "a")
+    assert row["yt_title"] == "A" and row["ig_caption"].startswith("a ig")
+    assert len(fake.messages.calls) == 1  # YouTube text untouched, only Instagram called
+    # Second run: nothing left to do.
+    assert rewrite.run(conn, cfg)["rewritten"] == 0

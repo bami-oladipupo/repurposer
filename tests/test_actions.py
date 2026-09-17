@@ -48,7 +48,7 @@ def test_release_is_noop_when_not_held(tmp_db):
 
 def test_cancel_then_requeue_back_to_queue_without_slot(tmp_db):
     """Criterion 13: re-adding puts the video back in the queue for the next free slot."""
-    add_video(tmp_db, "v", status="ready", yt_status="scheduled", yt_scheduled_for=iso(NOW + timedelta(hours=1)),
+    add_video(tmp_db, "v", status="ready", published_at=NOW - timedelta(hours=2), yt_status="scheduled", yt_scheduled_for=iso(NOW + timedelta(hours=1)),
               yt_error="old error", yt_attempts=2)
     actions.cancel(tmp_db, "v", "youtube")
     row = db.get_video(tmp_db, "v")

@@ -180,11 +180,22 @@ def rewrite_video(conn: sqlite3.Connection, video: dict[str, Any], cfg: dict[str
     return {"done": done, "error": error}
 
 
-def pending(conn: sqlite3.Connection, limit: int) -> list[dict[str, Any]]:
-    """Videos that still need a rewrite: active, not held, not yet attempted."""
+_MISSING_TEXT = {
+    "youtube": "((yt_title IS NULL OR yt_description IS NULL) AND yt_status NOT IN ('uploaded','skipped','cancelled'))",
+    "instagram": "(ig_caption IS NULL AND ig_status NOT IN ('uploaded','skipped','cancelled'))",
+}
+
+
+def pending(conn: sqlite3.Connection, limit: int, platforms: list[str] | None = None) -> list[dict[str, Any]]:
+    """Videos that still need a rewrite: active, not held, and either never attempted or already rewritten
+    for one platform but missing text for another that has rewriting on (a workflow enabled later).
+    Failed rewrites are not retried automatically."""
+    platforms = platforms if platforms is not None else enabled_platforms(conn)
+    missing = " OR ".join(_MISSING_TEXT[p] for p in platforms if p in _MISSING_TEXT) or "0"
     return db.rows(
         conn,
-        """SELECT * FROM videos WHERE rewrite_status IS NULL AND status IN ('new','downloaded','ready')
+        f"""SELECT * FROM videos WHERE status IN ('new','downloaded','ready')
+           AND (rewrite_status IS NULL OR (rewrite_status = 'done' AND ({missing})))
            ORDER BY CASE WHEN origin='new' THEN 0 ELSE 1 END,
                     COALESCE(yt_scheduled_for, ig_scheduled_for, '9999') ASC LIMIT ?""",
         (limit,),
@@ -201,7 +212,7 @@ def run(conn: sqlite3.Connection, cfg: dict[str, Any]) -> dict[str, Any]:
         return stats
     limit = settings(cfg)["max_per_run"]
     cl = None
-    for v in pending(conn, limit):
+    for v in pending(conn, limit, stats["platforms"]):
         with db.tx(conn):
             res = rewrite_video(conn, v, cfg, platforms=stats["platforms"], cl=cl)
         if res["error"]:

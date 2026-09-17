@@ -228,6 +228,12 @@ def toggle_enabled(request: Request, platform: str, on: str = Form("")):
     conn = get_conn()
     with db.tx(conn):
         db.save_workflow(conn, platform, enabled=int(on == "1"))
+        if on == "1":
+            # Videos another platform already finished are 'done' at video level and invisible to the
+            # scheduler. Re-evaluate them so the newly enabled platform can pick them up.
+            px = PREFIX[platform]
+            for r in db.rows(conn, f"SELECT tiktok_id FROM videos WHERE status IN ('done','failed') AND {px}_status = 'queued'"):
+                actions.refresh_done(conn, r["tiktok_id"])
     return render(request, "partials/workflow_card.html", conn, card=_card_ctx(conn, platform))
 
 

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Repurposer · Instagram sign-in</title>
+<meta name="robots" content="noindex">
+<style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222}code{background:#f2f2f2;padding:.1rem .3rem}</style>
+</head>
+<body>
+<h1>Finishing Instagram sign-in</h1>
+<p id="msg">Handing back to the Repurposer app on this Mac. If nothing happens, <a id="go" href="#">continue</a>.</p>
+<script>
+(function () {
+  // Meta insists on an HTTPS redirect URI. This page only relays the query string Meta appended
+  // (code, state, error) to the app running on this Mac. The target is fixed; nothing here is user controlled.
+  var target = "http://localhost:8080/oauth/instagram/callback" + window.location.search;
+  document.getElementById("go").href = target;
+  if (window.location.search.indexOf("code=") !== -1 || window.location.search.indexOf("error=") !== -1) {
+    window.location.replace(target);
+  } else {
+    document.getElementById("msg").textContent = "This page is only used during Instagram sign-in for the Repurposer app. Open the app on your Mac and press Connect on the Instagram card.";
+  }
+})();
+</script>
+</body>
+</html>

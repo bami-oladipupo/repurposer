@@ -87,7 +87,7 @@ Do these in order. Steps 1 to 5 are one-off clicks in Instagram and Meta's devel
 
 4. **Copy the credentials and register the redirect.** On that API setup page:
    - Copy the **Instagram app ID** and **Instagram app secret** (these differ from the Meta app ID at the top of the dashboard; use the Instagram ones).
-   - Under "Set up Instagram business login" → Business login settings → **OAuth redirect URIs**, add exactly `http://localhost:8080/oauth/instagram/callback`. Meta accepts a plain http localhost address while the app is in Development mode. If the form rejects it, tell Claude and we will front the app with an HTTPS address via Tailscale instead.
+   - Under "Set up Instagram business login" → Business login settings → **OAuth redirect URIs**, add exactly `https://bami-oladipupo.github.io/repurposer/oauth/instagram/callback/` (trailing slash included). Meta rejects plain `http://localhost`, so a static page on the GitHub Pages site (`site/oauth/instagram/callback/index.html`, served from the `main` branch) receives the redirect and relays the code to `http://localhost:8080/oauth/instagram/callback` on this Mac.
 
 5. **Add the account as a tester.** App dashboard → App roles → Roles → **Add people** → Instagram Tester → enter the handle. Then accept the invite in the Instagram app: Settings → Website permissions (or Apps and websites) → Tester invites → Accept. While the app is in Development mode only testers can log in, which is exactly what we want. No App Review is needed because nobody else will ever use this app.
 
@@ -95,7 +95,7 @@ Do these in order. Steps 1 to 5 are one-off clicks in Instagram and Meta's devel
    ```
    IG_APP_ID=<Instagram app ID from step 4>
    IG_APP_SECRET=<Instagram app secret from step 4>
-   IG_REDIRECT_URI=http://localhost:8080/oauth/instagram/callback
+   IG_REDIRECT_URI=https://bami-oladipupo.github.io/repurposer/oauth/instagram/callback/
    ```
    Restart the web app (`launchctl kickstart -k gui/$(id -u)/com.bami.repurposer.web`), open Connections, press **Connect** on the Instagram card, log in with the Instagram account and approve the two permissions (`instagram_business_basic`, `instagram_business_content_publish`). The callback stores a 60-day token in `tokens/instagram.json`; the worker refreshes it once it has under ten days left, so it never needs redoing unless the password changes or the tester role is removed.
 

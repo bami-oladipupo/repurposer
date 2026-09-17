@@ -71,7 +71,7 @@ def _check(resp: requests.Response) -> dict[str, Any]:
 
 def authorize_url(state: str) -> str:
     app_id = config.env("IG_APP_ID")
-    redirect = config.env("IG_REDIRECT_URI", "http://localhost:8080/oauth/instagram/callback")
+    redirect = config.env("IG_REDIRECT_URI", "https://bami-oladipupo.github.io/repurposer/oauth/instagram/callback/")
     if not app_id:
         raise InstagramError("IG_APP_ID is not set in .env")
     q = {"client_id": app_id, "redirect_uri": redirect, "scope": ",".join(SCOPES), "response_type": "code",
@@ -81,7 +81,7 @@ def authorize_url(state: str) -> str:
 
 def exchange_code(code: str) -> dict[str, Any]:
     app_id, secret = config.env("IG_APP_ID"), config.env("IG_APP_SECRET")
-    redirect = config.env("IG_REDIRECT_URI", "http://localhost:8080/oauth/instagram/callback")
+    redirect = config.env("IG_REDIRECT_URI", "https://bami-oladipupo.github.io/repurposer/oauth/instagram/callback/")
     if not app_id or not secret:
         raise InstagramError("IG_APP_ID / IG_APP_SECRET missing from .env")
     short = _check(requests.post(TOKEN_URL, data={
