@@ -75,7 +75,7 @@ Quota: 10,000 units a day, 1,600 per upload, so about six uploads a day. The wor
 
 ## Instagram: what is needed now
 
-Everything in the code is ready: the publisher (`repurposer/publishers/instagram.py`) uses the **Instagram API with Instagram Login**, which needs no Facebook Page, and does a resumable Reels upload that cannot double-post if it crashes mid-way. The web app has the Connect button, the OAuth callback and the health check. What is missing is on Meta's side and in `.env`. As of 3 September: `IG_APP_ID` and `IG_APP_SECRET` are empty, there is no `tokens/instagram.json`, and the Instagram workflow is Inactive.
+Everything in the code is ready: the publisher (`repurposer/publishers/instagram.py`) uses the **Instagram API with Instagram Login**, which needs no Facebook Page. Meta fetches each Reel from a public URL rather than accepting an upload, so the file is staged in a Cloudflare R2 bucket for the minutes that takes and deleted afterwards (`repurposer/publishers/staging.py`). The publish cannot double-post if it crashes mid-way. The web app has the Connect button, the OAuth callback and the health check. What is missing is on Meta's side and in `.env`. As of 3 September: `IG_APP_ID` and `IG_APP_SECRET` are empty, there is no `tokens/instagram.json`, and the Instagram workflow is Inactive.
 
 Do these in order. Steps 1 to 5 are one-off clicks in Instagram and Meta's developer site; step 6 is the only thing on this Mac.
 
@@ -99,7 +99,9 @@ Do these in order. Steps 1 to 5 are one-off clicks in Instagram and Meta's devel
    ```
    Restart the web app (`launchctl kickstart -k gui/$(id -u)/com.bami.repurposer.web`), open Connections, press **Connect** on the Instagram card, log in with the Instagram account and approve the two permissions (`instagram_business_basic`, `instagram_business_content_publish`). The callback stores a 60-day token in `tokens/instagram.json`; the worker refreshes it once it has under ten days left, so it never needs redoing unless the password changes or the tester role is removed.
 
-7. **Activate the workflow.** Workflows → ⋮ on the Instagram row → **Activate workflow**, and check Auto Publish is set the way you want. Default slots are 11:00 and 19:00 London; change them under Settings → Publish. The caption template and hashtags are under Settings → Destination.
+7. **Set up Cloudflare R2 for staging.** Instagram Login apps cannot upload bytes; Meta fetches the video from a public URL, and this Mac has none. Create a free Cloudflare account, R2 Object Storage → Create bucket `repurposer-media`, then in the bucket Settings enable the **r2.dev subdomain** under Public access and copy its address. Manage R2 API Tokens → Create API token with **Object Read & Write** on that bucket. Put `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `R2_PUBLIC_BASE_URL` in `.env` (see `.env.example`). Each Reel is uploaded under a random key just before publishing and deleted as soon as the container is finished, so the bucket stays empty between runs. The Connections page shows whether the bucket is reachable.
+
+8. **Activate the workflow.** Workflows → ⋮ on the Instagram row → **Activate workflow**, and check Auto Publish is set the way you want. Default slots are 11:00 and 19:00 London; change them under Settings → Publish. The caption template and hashtags are under Settings → Destination.
 
 Things to know once it is running:
 
@@ -186,7 +188,8 @@ repurposer/
   overrides.py            overrides.yaml
   notify.py               Telegram / email / stdout
   publishers/youtube.py   Data API v3 resumable upload
-  publishers/instagram.py Instagram API with Instagram Login, resumable Reels
+  publishers/instagram.py Instagram API with Instagram Login, Reels from a public URL
+  publishers/staging.py   Cloudflare R2 staging: upload under a random key, delete after publish
 templates/, static/       Jinja2 + HTMX UI, styled after Repurpose.io
 scripts/                  check_audit.py, demo_db.py, open-ui.sh
 launchd/                  plists and install script

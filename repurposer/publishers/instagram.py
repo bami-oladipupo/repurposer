@@ -1,10 +1,12 @@
 """Instagram Reels via the Instagram API with Instagram Login (no Facebook Page needed).
 
 Token in tokens/instagram.json: {"access_token", "user_id", "username", "expires_at"}.
-Resumable upload: create a REELS container with upload_type=resumable, POST the bytes to the
-rupload endpoint, poll the container until FINISHED, then media_publish. The media_publish step
-only ever runs when a container ID exists and no media ID exists, so a crash mid-way cannot
-double-post.
+
+Meta fetches the video itself from a public video_url (the resumable byte upload is only offered
+to apps on the Facebook Login flow). The file is staged in a Cloudflare R2 bucket for the minutes
+that takes (see staging.py) and removed afterwards. Create a REELS container with the URL, poll
+until FINISHED, then media_publish. The media_publish step only ever runs when a container ID
+exists and no media ID exists, so a crash mid-way cannot double-post.
 """
 from __future__ import annotations
 
@@ -21,13 +23,12 @@ import requests
 
 from .. import actions, captions, config, db
 from ..timeutil import iso, parse, utcnow
-from . import PublishResult
+from . import PublishResult, staging
 
 log = logging.getLogger("repurposer.instagram")
 
 API_VERSION = "v23.0"
 GRAPH = f"https://graph.instagram.com/{API_VERSION}"
-RUPLOAD = f"https://rupload.facebook.com/ig-api-upload/{API_VERSION}"
 AUTH_URL = "https://www.instagram.com/oauth/authorize"
 TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 SCOPES = ["instagram_business_basic", "instagram_business_content_publish"]
@@ -161,21 +162,10 @@ def quota_ok(conn: sqlite3.Connection, cfg: dict[str, Any]) -> tuple[bool, str]:
 
 # ---------- publishing ----------
 
-def _create_container(tok: dict[str, Any], caption: str, share_to_feed: bool) -> dict[str, Any]:
+def _create_container(tok: dict[str, Any], caption: str, share_to_feed: bool, video_url: str) -> dict[str, Any]:
     return _check(requests.post(f"{GRAPH}/{tok['user_id']}/media", data={
-        "media_type": "REELS", "upload_type": "resumable", "caption": caption,
+        "media_type": "REELS", "video_url": video_url, "caption": caption,
         "share_to_feed": "true" if share_to_feed else "false", "access_token": tok["access_token"]}, timeout=TIMEOUT))
-
-
-def _upload_bytes(tok: dict[str, Any], container_id: str, path: Path) -> None:
-    size = path.stat().st_size
-    headers = {"Authorization": f"OAuth {tok['access_token']}", "offset": "0", "file_size": str(size),
-               "Content-Type": "application/octet-stream"}
-    with path.open("rb") as fh:
-        resp = requests.post(f"{RUPLOAD}/{container_id}", headers=headers, data=fh, timeout=600)
-    data = _check(resp)
-    if not data.get("success", True):
-        raise InstagramError(f"rupload did not report success: {data}")
 
 
 def _wait_for_container(tok: dict[str, Any], container_id: str) -> None:
@@ -233,12 +223,12 @@ def publish(conn: sqlite3.Connection, video: dict[str, Any], workflow: dict[str,
                 log.warning("previous container %s unusable (%s); creating a new one", container_id, exc)
                 container_id = None
         if not container_id:
-            created = _create_container(tok, caption, share)
-            container_id = str(created["id"])
-            with db.tx(conn):
-                db.update_video(conn, video["tiktok_id"], ig_container_id=container_id)
-            _upload_bytes(tok, container_id, path)
-            _wait_for_container(tok, container_id)
+            with staging.stage(path) as video_url:
+                created = _create_container(tok, caption, share, video_url)
+                container_id = str(created["id"])
+                with db.tx(conn):
+                    db.update_video(conn, video["tiktok_id"], ig_container_id=container_id)
+                _wait_for_container(tok, container_id)
         media_id = _media_publish(tok, container_id)
     except Exception as exc:  # noqa: BLE001
         return PublishResult(False, f"{type(exc).__name__}: {exc}")

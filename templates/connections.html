@@ -81,6 +81,7 @@
   <div class="pad">
     {% if ig_app_configured %}
     <p class="small muted">Meta app credentials are in .env. Convert the account to a Creator account, then press Connect above.</p>
+    <p class="small {{ 'muted' if r2_ok else 'err' }}">Reel staging (Cloudflare R2): {{ r2_msg }}{% if not r2_ok %}. Reels cannot publish until this is set; see README step 7.{% endif %}</p>
     {% else %}
     <p class="small muted">Needs a Creator account plus IG_APP_ID and IG_APP_SECRET in .env from a Meta developer app. Steps are in the README. Leave the workflow inactive until then.</p>
     {% endif %}

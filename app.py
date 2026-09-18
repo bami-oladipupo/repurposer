@@ -626,9 +626,12 @@ def connections(request: Request, msg: str = "", error: str = ""):
         exp = parse(c.get("token_expires_at")) if c.get("token_expires_at") else None
         rows.append({**c, "platform": plat, "enabled": wf.get("enabled", 0),
                      "days_left": (exp - utcnow()).days if exp else None})
+    from repurposer.publishers import staging
+    r2_ok, r2_msg = staging.check() if config.env("R2_ACCOUNT_ID") else (False, "R2 not configured in .env")
     return render(request, "connections.html", conn, rows=rows, msg=msg, error=error,
                   yt_secret_present=yt_secret.exists(), yt_secret_path=str(yt_secret),
-                  ig_app_configured=bool(config.env("IG_APP_ID") and config.env("IG_APP_SECRET")))
+                  ig_app_configured=bool(config.env("IG_APP_ID") and config.env("IG_APP_SECRET")),
+                  r2_ok=r2_ok, r2_msg=r2_msg)
 
 
 @app.post("/connections/youtube/client-secret")
