@@ -74,7 +74,7 @@ def reencode(src: Path, dst: Path) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise ProbeError("ffmpeg not found on PATH")
-    cmd = [ffmpeg, "-y", "-i", str(src), "-c:v", "libx264", "-preset", "fast", "-crf", "21",
+    cmd = [ffmpeg, "-y", "-i", str(src), "-c:v", "libx264", "-preset", "medium", "-crf", "18",
            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
