@@ -1,4 +1,7 @@
 from datetime import timedelta
+from types import SimpleNamespace
+
+import pytest
 
 from repurposer import db, downloader
 from repurposer.timeutil import iso, utcnow
@@ -95,3 +98,68 @@ def test_download_returns_existing_file_without_network(tmp_path, monkeypatch):
     target = tmp_path / "abc.mp4"
     target.write_bytes(b"data")
     assert downloader.download({"tiktok_id": "abc"}, tmp_path) == target
+
+
+def _failing_ydl(monkeypatch, message):
+    import yt_dlp
+
+    class _Fails:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def extract_info(self, url, download=True):
+            raise yt_dlp.utils.DownloadError(message)
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", _Fails)
+
+
+IP_BLOCKED = "ERROR: [TikTok] 123: Your IP address is blocked from accessing this post"
+
+
+def test_ip_blocked_error_on_a_deleted_tiktok_is_gone(tmp_path, monkeypatch):
+    """yt-dlp words a deleted TikTok as an IP block; oEmbed answering 400 proves the post is gone."""
+    _failing_ydl(monkeypatch, IP_BLOCKED)
+    monkeypatch.setattr(downloader, "confirmed_gone", lambda url: True)
+    with pytest.raises(downloader.VideoGone):
+        downloader.download({"tiktok_id": "123"}, tmp_path)
+
+
+def test_ip_blocked_error_stays_retryable_when_the_post_still_exists(tmp_path, monkeypatch):
+    _failing_ydl(monkeypatch, IP_BLOCKED)
+    monkeypatch.setattr(downloader, "confirmed_gone", lambda url: False)
+    with pytest.raises(downloader.DownloadError) as exc:
+        downloader.download({"tiktok_id": "123"}, tmp_path)
+    assert not isinstance(exc.value, downloader.VideoGone)
+
+
+@pytest.mark.parametrize("status,gone", [(400, True), (404, True), (200, False), (403, False), (429, False)])
+def test_confirmed_gone_only_trusts_a_missing_post(monkeypatch, status, gone):
+    monkeypatch.setattr(downloader.requests, "get", lambda *a, **k: SimpleNamespace(status_code=status))
+    assert downloader.confirmed_gone("https://www.tiktok.com/@x/video/1") is gone
+
+
+def test_confirmed_gone_is_false_when_tiktok_cannot_be_reached(monkeypatch):
+    def _down(*a, **k):
+        raise downloader.requests.ConnectionError("no network")
+
+    monkeypatch.setattr(downloader.requests, "get", _down)
+    assert downloader.confirmed_gone("https://www.tiktok.com/@x/video/1") is False
+
+
+def test_repeatedly_failing_download_backs_off(tmp_db, cfg):
+    """After retry_runs failures a download is retried every download_retry_minutes, not every run."""
+    old = utcnow() - timedelta(hours=5)
+    add_video(tmp_db, "early", status="new", published_at=old, attempts=3, last_attempt=iso(utcnow()))
+    add_video(tmp_db, "waiting", status="new", published_at=old, attempts=4,
+              last_attempt=iso(utcnow() - timedelta(minutes=30)))
+    add_video(tmp_db, "due", status="new", published_at=old, attempts=40,
+              last_attempt=iso(utcnow() - timedelta(minutes=200)))
+    assert _ids(downloader.select_pending(tmp_db, cfg)) == ["due", "early"]
+    cfg["limits"]["download_retry_minutes"] = 15
+    assert _ids(downloader.select_pending(tmp_db, cfg)) == ["due", "early", "waiting"]

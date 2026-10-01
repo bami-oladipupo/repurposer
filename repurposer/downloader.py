@@ -13,6 +13,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from . import actions, config, db
 from .timeutil import iso, minutes_ago, utcnow
 
@@ -23,6 +25,7 @@ log = logging.getLogger("repurposer.downloader")
 FORMAT = "bv*[format_note!*=watermark]+ba/b[format_note!*=watermark]/bv*+ba/b"
 
 UNAVAILABLE_MARKERS = ("Video not available", "unavailable", "private", "removed", "404", "not found", "Unable to extract")
+OEMBED_URL = "https://www.tiktok.com/oembed"
 
 
 class DownloadError(RuntimeError):
@@ -36,6 +39,22 @@ class VideoGone(DownloadError):
 def free_gb(path: Path) -> float:
     usage = shutil.disk_usage(str(path))
     return usage.free / (1024 ** 3)
+
+
+def confirmed_gone(url: str) -> bool:
+    """True only when TikTok itself says the post does not exist.
+
+    yt-dlp reports a deleted or private TikTok as "Your IP address is blocked from accessing this
+    post", which reads like a temporary network problem. TikTok's oEmbed endpoint answers 400 or
+    404 for a post that is gone and 200 for one that exists. Anything else (a real block, a rate
+    limit, no network) is not proof, so the download stays a retryable failure.
+    """
+    try:
+        resp = requests.get(OEMBED_URL, params={"url": url}, timeout=20)
+    except requests.RequestException as exc:
+        log.warning("could not check %s against TikTok oEmbed: %s", url, exc)
+        return False
+    return resp.status_code in (400, 404)
 
 
 def download(video: dict[str, Any], media_dir: Path | None = None) -> Path:
@@ -62,7 +81,7 @@ def download(video: dict[str, Any], media_dir: Path | None = None) -> Path:
             ydl.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as exc:
         msg = str(exc)
-        if any(m.lower() in msg.lower() for m in UNAVAILABLE_MARKERS):
+        if any(m.lower() in msg.lower() for m in UNAVAILABLE_MARKERS) or confirmed_gone(url):
             raise VideoGone(f"TikTok {video['tiktok_id']} is no longer available: {msg[:300]}") from exc
         raise DownloadError(f"yt-dlp failed for {video['tiktok_id']}: {msg[:500]}") from exc
     if not target.exists():
@@ -77,7 +96,10 @@ def download(video: dict[str, Any], media_dir: Path | None = None) -> Path:
 def select_pending(conn: sqlite3.Connection, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """Rows in status 'new' that should be downloaded now."""
     min_age = int(db.get_setting(conn, "min_age_minutes", cfg["source"].get("min_age_minutes", 60)))
-    hours = float(cfg.get("limits", {}).get("backfill_download_hours", 24))
+    limits = cfg.get("limits", {})
+    hours = float(limits.get("backfill_download_hours", 24))
+    retry_runs = int(limits.get("retry_runs", 3))
+    retry_minutes = float(limits.get("download_retry_minutes", 180))
     soon = iso(utcnow() + timedelta(hours=hours))
     rows = db.rows(
         conn,
@@ -93,6 +115,12 @@ def select_pending(conn: sqlite3.Connection, cfg: dict[str, Any]) -> list[dict[s
         if r["origin"] == "new":
             age = minutes_ago(r.get("published_at") or r.get("first_seen"))
             if age is not None and age < min_age:
+                continue
+        # A download that keeps failing is retried on the first retry_runs runs, then only every
+        # download_retry_minutes, so one stuck video cannot fail (and alert on) every single run.
+        if int(r.get("attempts") or 0) > retry_runs:
+            since = minutes_ago(r.get("last_attempt"))
+            if since is not None and since < retry_minutes:
                 continue
         out.append(r)
     return out

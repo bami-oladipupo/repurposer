@@ -54,6 +54,7 @@ limits:
   backfill_download_hours: 24 # download backfill videos only this close to their slot
   min_free_disk_gb: 2
   retry_runs: 3               # failed publishes retried on the next N runs
+  download_retry_minutes: 180 # a download still failing after retry_runs tries is retried this often, not every run
   max_publish_per_run: 1      # burst guard: at most N publishes per platform per worker run; extras wait for the next run
   max_slot_lag_minutes: 0     # burst guard: slots older than this requeue instead of posting late; 0 = always post, however late
   min_publish_gap_minutes: 120 # burst guard: nothing publishes until this long after the platform's last upload
