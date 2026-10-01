@@ -149,8 +149,9 @@ def quota_ok(conn: sqlite3.Connection, cfg: dict[str, Any]) -> tuple[bool, str]:
         data = _check(requests.get(f"{GRAPH}/{tok['user_id']}/content_publishing_limit",
                                    params={"fields": "quota_usage,config", "access_token": tok["access_token"]},
                                    timeout=TIMEOUT))
-    except InstagramError as exc:
-        return False, f"could not read publishing limit: {exc}"
+    except (InstagramError, requests.RequestException) as exc:
+        # A timeout or dropped connection here must roll the slots, not crash the stage.
+        return False, f"could not read publishing limit: {type(exc).__name__}: {exc}"
     entry = (data.get("data") or [{}])[0]
     used = int(entry.get("quota_usage", 0))
     total = int((entry.get("config") or {}).get("quota_total", 100))

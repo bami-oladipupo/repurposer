@@ -132,8 +132,8 @@ def stage_poll(conn: sqlite3.Connection, cfg: dict[str, Any], run: Run) -> None:
         run.held.append((v["tiktok_id"], v["status_reason"] or "held"))
 
 
-def stage_schedule(conn: sqlite3.Connection, run: Run) -> None:
-    assigned = scheduler.assign_all(conn)
+def stage_schedule(conn: sqlite3.Connection, cfg: dict[str, Any], run: Run) -> None:
+    assigned = scheduler.assign_all(conn, cfg=cfg)
     n = sum(len(v) for v in assigned.values())
     if n:
         run.notes.append("scheduled: " + ", ".join(f"{p} {len(v)}" for p, v in assigned.items() if v))
@@ -235,7 +235,7 @@ def cmd_cycle(conn: sqlite3.Connection, cfg: dict[str, Any], log_path: Path, *, 
     overrides = run.stage("overrides", stage_overrides, conn, cfg, run) or {}
     run.stage("connections", stage_connections, conn, cfg, run)
     run.stage("poll", stage_poll, conn, cfg, run)
-    run.stage("schedule", stage_schedule, conn, run)
+    run.stage("schedule", stage_schedule, conn, cfg, run)
     run.stage("download", stage_download, conn, cfg, run)
     run.stage("transform", stage_transform, conn, cfg, run)
     run.stage("rewrite", stage_rewrite, conn, cfg, run)

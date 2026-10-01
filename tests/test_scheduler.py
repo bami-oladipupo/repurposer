@@ -217,3 +217,37 @@ def test_next_scheduled(tmp_db, monkeypatch):
     add_video(tmp_db, "n2", status="ready", yt_status="scheduled", yt_scheduled_for=iso(SLOT1))
     add_video(tmp_db, "past", status="ready", yt_status="scheduled", yt_scheduled_for=iso(NOW - timedelta(days=1)))
     assert scheduler.next_scheduled(tmp_db, "youtube") == iso(SLOT1)
+
+
+# ---------- taper ----------
+
+def test_tapered_times_keeps_first_and_last():
+    assert scheduler._tapered_times(["10:00", "14:00", "18:00"], 2) == {"10:00", "18:00"}
+    assert scheduler._tapered_times(["10:00", "18:00"], 2) == {"10:00", "18:00"}
+    assert scheduler._tapered_times(["10:00", "14:00", "18:00"], 0) == {"10:00", "14:00", "18:00"}
+
+
+def test_taper_slows_to_two_a_day_once_under_threshold(tmp_db):
+    """Three slots a day, taper at 4 remaining: the first two videos take a full day, then two a day."""
+    db.replace_slots(tmp_db, "youtube", [(wd, t) for wd in range(7) for t in ("10:00", "14:00", "18:00")])
+    db.save_workflow(tmp_db, "youtube", content_scope="new_and_existing", existing_start_from=None,
+                     existing_order="oldest_first", existing_limit=None)
+    for i in range(6):
+        add_video(tmp_db, f"e{i}", origin="existing", status="new", published_at=datetime(2026, 1, 1 + i, tzinfo=UTC))
+    cfg = {"schedule": {"taper_after_remaining": 4, "taper_slots_per_day": 2}}
+    assigned = scheduler.assign(tmp_db, "youtube", now=NOW, cfg=cfg)
+    order = [tid for tid, _ in assigned]
+    assert order == ["e0", "e1", "e2", "e3", "e4", "e5"]  # oldest first
+    times = [to_local(parse(w), TZ).strftime("%d %H:%M") for _, w in assigned]
+    # 6 remaining: e0 and e1 go at 3/day pace; from e2 on 4 remain, so 14:00 slots are skipped.
+    assert times == ["10 10:00", "10 14:00", "10 18:00", "11 10:00", "11 18:00", "12 10:00"]
+
+
+def test_no_taper_without_config(tmp_db):
+    db.replace_slots(tmp_db, "youtube", [(wd, t) for wd in range(7) for t in ("10:00", "14:00", "18:00")])
+    db.save_workflow(tmp_db, "youtube", content_scope="new_and_existing", existing_start_from=None,
+                     existing_order="oldest_first", existing_limit=None)
+    for i in range(3):
+        add_video(tmp_db, f"e{i}", origin="existing", status="new", published_at=datetime(2026, 1, 1 + i, tzinfo=UTC))
+    assigned = scheduler.assign(tmp_db, "youtube", now=NOW)
+    assert [to_local(parse(w), TZ).strftime("%H:%M") for _, w in assigned] == ["10:00", "14:00", "18:00"]

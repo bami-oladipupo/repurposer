@@ -101,8 +101,39 @@ def _candidates(conn: sqlite3.Connection, platform: str, workflow: dict[str, Any
     return new, existing
 
 
-def assign(conn: sqlite3.Connection, platform: str, *, now: datetime | None = None) -> list[tuple[str, str]]:
-    """Assign publish times for one platform. Returns [(tiktok_id, iso_time)] of new assignments."""
+def _taper(cfg: dict[str, Any] | None) -> tuple[int, int]:
+    """(remaining threshold, slots per day once under it). (0, 0) means no taper."""
+    sched = (cfg or {}).get("schedule") or {}
+    return int(sched.get("taper_after_remaining") or 0), int(sched.get("taper_slots_per_day") or 0)
+
+
+def _tapered_times(times: list[str], per_day: int) -> set[str]:
+    """Which of a day's slot times stay open once the taper applies: the first per_day - 1 and the last,
+    so a 10:00 / 14:00 / 18:00 day slows to 10:00 / 18:00."""
+    times = sorted(times)
+    if per_day <= 0 or len(times) <= per_day:
+        return set(times)
+    return set(times[: per_day - 1] + times[-1:])
+
+
+def remaining_count(conn: sqlite3.Connection, platform: str) -> int:
+    """Videos on this platform still waiting to go out: queued, scheduled or failed, not skipped or held."""
+    px = PREFIX[platform]
+    r = conn.execute(
+        f"SELECT COUNT(*) AS n FROM videos WHERE {px}_status IN ('queued','scheduled','failed') "
+        "AND status NOT IN ('skipped','held')"
+    ).fetchone()
+    return int(r["n"])
+
+
+def assign(conn: sqlite3.Connection, platform: str, *, now: datetime | None = None,
+           cfg: dict[str, Any] | None = None) -> list[tuple[str, str]]:
+    """Assign publish times for one platform. Returns [(tiktok_id, iso_time)] of new assignments.
+
+    Taper (schedule.taper_after_remaining / taper_slots_per_day in config.yaml): once the number of videos
+    still to publish on this platform, counted at each slot, drops to the threshold, days open only
+    taper_slots_per_day of their slots. Counted per slot so the slowdown lands at the right point in the
+    run even though the horizon is filled two weeks ahead."""
     now = now or utcnow()
     wf = db.get_workflow(conn, platform)
     if wf is None or not wf["enabled"]:
@@ -135,9 +166,23 @@ def assign(conn: sqlite3.Connection, platform: str, *, now: datetime | None = No
     free = [s for s in future_slots(conn, platform, tz, now) if iso(s) not in taken]
     new_queue = list(new)
     existing_queue = list(existing)
+    threshold, per_day = _taper(cfg)
+    remaining_total = remaining_count(conn, platform)
+    taken_times = sorted(t for t in (parse(x) for x in taken) if t is not None)
+    day_times: dict[int, list[str]] = {}
+    for srow in db.get_slots(conn, platform):
+        day_times.setdefault(int(srow["weekday"]), []).append(srow["local_time"])
     for slot in free:
         if not new_queue and not existing_queue:
             break
+        if threshold > 0 and per_day > 0:
+            # Still to publish at the moment this slot arrives: everything waiting, minus what is
+            # already booked before it and what this loop has booked so far.
+            booked_before = sum(1 for t in taken_times if t < slot) + sum(1 for _, w in assigned if parse(w) < slot)
+            if remaining_total - booked_before <= threshold:
+                local = to_local(slot, tz)
+                if local.strftime("%H:%M") not in _tapered_times(day_times.get(local.weekday(), []), per_day):
+                    continue
         chosen = None
         # New content first: the earliest new video that is old enough for this slot.
         for i, v in enumerate(new_queue):
@@ -154,11 +199,12 @@ def assign(conn: sqlite3.Connection, platform: str, *, now: datetime | None = No
     return assigned
 
 
-def assign_all(conn: sqlite3.Connection, now: datetime | None = None) -> dict[str, list[tuple[str, str]]]:
+def assign_all(conn: sqlite3.Connection, now: datetime | None = None,
+               cfg: dict[str, Any] | None = None) -> dict[str, list[tuple[str, str]]]:
     out = {}
     for plat in PLATFORMS:
         with db.tx(conn):
-            out[plat] = assign(conn, plat, now=now)
+            out[plat] = assign(conn, plat, now=now, cfg=cfg)
     return out
 
 

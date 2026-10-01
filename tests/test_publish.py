@@ -183,6 +183,8 @@ def test_module_for_unknown_platform():
 
 def test_burst_guard_requeues_stale_slots_instead_of_posting_late(tmp_db, cfg, fake):
     """Six slots fell due while the Mac slept. Only fresh ones publish; stale ones get a new slot."""
+    cfg["limits"]["max_slot_lag_minutes"] = 120
+    cfg["limits"]["min_publish_gap_minutes"] = 0
     due_video(tmp_db, "fresh", yt_scheduled_for=iso(utcnow() - timedelta(minutes=30)))
     due_video(tmp_db, "stale1", yt_scheduled_for=iso(utcnow() - timedelta(hours=5)))
     due_video(tmp_db, "stale2", yt_scheduled_for=iso(utcnow() - timedelta(days=2)))
@@ -194,15 +196,38 @@ def test_burst_guard_requeues_stale_slots_instead_of_posting_late(tmp_db, cfg, f
         assert row["yt_status"] == "queued" and row["yt_scheduled_for"] is None
 
 
-def test_burst_guard_caps_publishes_per_run(tmp_db, cfg, fake):
-    due_video(tmp_db, "a", yt_scheduled_for=iso(utcnow() - timedelta(minutes=40)))
-    due_video(tmp_db, "b", yt_scheduled_for=iso(utcnow() - timedelta(minutes=20)))
-    out = publish_due(tmp_db, cfg, "youtube", {})
-    assert fake.calls == ["a"]  # oldest slot first
-    assert out["rolled"] == ["b"] and db.get_video(tmp_db, "b")["yt_status"] == "queued"
-
-
 def test_burst_guard_does_not_touch_publish_now(tmp_db, cfg, fake):
     due_video(tmp_db, "old", yt_scheduled_for=iso(utcnow() - timedelta(days=1)))
     out = publish_due(tmp_db, cfg, "youtube", {}, only="old")
     assert fake.calls == ["old"] and out["rolled"] == []
+
+
+def test_burst_guard_lag_zero_posts_however_late(tmp_db, cfg, fake):
+    """max_slot_lag_minutes 0: an overdue slot still posts instead of being requeued."""
+    cfg["limits"]["max_slot_lag_minutes"] = 0
+    cfg["limits"]["min_publish_gap_minutes"] = 0
+    due_video(tmp_db, "late", yt_scheduled_for=iso(utcnow() - timedelta(days=3)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert fake.calls == ["late"] and out["rolled"] == []
+
+
+def test_burst_guard_over_cap_keeps_slot_for_next_run(tmp_db, cfg, fake):
+    cfg["limits"]["min_publish_gap_minutes"] = 0
+    due_video(tmp_db, "a", yt_scheduled_for=iso(utcnow() - timedelta(minutes=40)))
+    due_video(tmp_db, "b", yt_scheduled_for=iso(utcnow() - timedelta(minutes=20)))
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert fake.calls == ["a"] and out["rolled"] == []
+    row = db.get_video(tmp_db, "b")
+    assert row["yt_status"] == "scheduled" and row["yt_scheduled_for"] is not None
+    assert "wait for the next run" in out["note"]
+
+
+def test_burst_guard_min_gap_holds_until_last_upload_is_old_enough(tmp_db, cfg, fake):
+    cfg["limits"]["min_publish_gap_minutes"] = 120
+    add_video(tmp_db, "done", status="done", yt_status="uploaded", yt_published_at=iso(utcnow() - timedelta(minutes=30)))
+    due_video(tmp_db, "next")
+    out = publish_due(tmp_db, cfg, "youtube", {})
+    assert fake.calls == [] and "held back" in out["note"]
+    assert db.get_video(tmp_db, "next")["yt_status"] == "scheduled"
+    db.update_video(tmp_db, "done", yt_published_at=iso(utcnow() - timedelta(minutes=121)))
+    assert publish_due(tmp_db, cfg, "youtube", {})["published"] and fake.calls == ["next"]

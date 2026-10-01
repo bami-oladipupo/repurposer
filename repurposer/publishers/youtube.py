@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ TOKEN_PATH = config.TOKEN_DIR / "youtube.json"
 DAILY_QUOTA_UNITS = 10_000
 INSERT_COST = 1_600
 LIST_COST = 1
+UPLOAD_RETRIES = 5         # per upload: 5xx responses and dropped connections both count
+UPLOAD_RETRY_WAIT_S = 10   # multiplied by the retry number
 
 
 def client_secret_path() -> Path:
@@ -146,9 +149,19 @@ def upload(path: Path, title: str, description: str, extra: dict[str, Any], tags
         try:
             _status, response = request.next_chunk()
         except HttpError as exc:
-            if exc.resp.status in (500, 502, 503, 504) and retries < 5:
+            if exc.resp.status in (500, 502, 503, 504) and retries < UPLOAD_RETRIES:
                 retries += 1
                 log.warning("YouTube upload chunk failed (%s), retry %s", exc.resp.status, retries)
+                time.sleep(UPLOAD_RETRY_WAIT_S * retries)
+                continue
+            raise
+        except (OSError, ConnectionError) as exc:
+            # Broken pipe, connection reset, socket timeout: the resumable session survives, so
+            # wait and send the next chunk again instead of failing the whole upload.
+            if retries < UPLOAD_RETRIES:
+                retries += 1
+                log.warning("YouTube upload connection error (%s: %s), retry %s", type(exc).__name__, exc, retries)
+                time.sleep(UPLOAD_RETRY_WAIT_S * retries)
                 continue
             raise
     return response["id"]
