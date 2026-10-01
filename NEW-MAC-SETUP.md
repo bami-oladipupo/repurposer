@@ -28,7 +28,7 @@ Then AirDrop these three from `~/repurpose content` to the new Mac:
 
 | Item | Why |
 |---|---|
-| `.env` | Telegram, Instagram app secret, Anthropic key, Cloudflare R2 keys |
+| `.env` | Telegram, Instagram app secret, Anthropic key, Cloudflare R2 keys, IV Repost app token and push settings |
 | `tokens/` | Google client secret plus the YouTube and Instagram logins |
 | `media/` | Videos already downloaded for upcoming slots (about 200 MB) |
 
@@ -78,6 +78,17 @@ If either shows expired, reconnect from that page.
 ```bash
 osacompile -o ~/Desktop/Repurposer.app -e 'do shell script "/bin/zsh \"/Users/bami/repurpose content/scripts/open-ui.sh\""'
 ```
+
+## 4. The IV Repost iPhone app
+
+The app (source in `~/IV iOS Apps/IVRepost`) talks to this Mac at `http://<Mac name>.local:8080` with the
+`APP_TOKEN` from `.env`. On a new Mac check three things:
+
+| Check | Why |
+|---|---|
+| `WEB_HOST=0.0.0.0` in `.env` | Lets the phone reach the Mac. The web pages still answer only to the Mac itself |
+| `APNS_KEY_FILE` points at the push key on this Mac | Push alerts to the phone |
+| The Mac's name is unchanged, or update the address in the app's Settings | The app stores the address it was given |
 
 ## Afterwards
 

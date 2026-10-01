@@ -3,10 +3,13 @@
 
 Publishing never happens in this process: Publish Now and Run Now raise a job and spawn the worker.
 The only platform calls made here are the OAuth handshakes for the Connections page.
-No login screen: bind to 127.0.0.1 (default) or put Tailscale / a basic-auth proxy in front.
+No login screen for the web pages: they answer only to this Mac (loopback). The IV Repost iPhone app
+uses /api/app, which needs the APP_TOKEN from .env on every request, so WEB_HOST can be opened to the
+local network or Tailscale without exposing the pages.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import secrets
@@ -20,11 +23,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile  # noqa: E402
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.templating import Jinja2Templates  # noqa: E402
 
-from repurposer import actions, captions, config, db, logsetup, rewrite, scheduler  # noqa: E402
+from repurposer import actions, api, captions, config, db, logsetup, rewrite, scheduler  # noqa: E402
 from repurposer.config import PLATFORMS, PLATFORM_LABEL, PREFIX  # noqa: E402
 from repurposer.timeutil import fmt_local, iso, local_to_utc, parse, to_local, utcnow  # noqa: E402
 
@@ -36,6 +40,42 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 _oauth_states: dict[str, dict[str, Any]] = {}
+API_PREFIX = "/api/app/"
+
+
+# ---------- access ----------
+
+def _is_loopback(host: str | None) -> bool:
+    try:
+        return ipaddress.ip_address(host or "").is_loopback
+    except ValueError:
+        return False
+
+
+def _api_error(status: int, message: str) -> JSONResponse:
+    return JSONResponse({"success": False, "error": message}, status_code=status)
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    """The app API needs the bearer token from anywhere; everything else answers only to this Mac."""
+    path = request.url.path
+    if path.startswith(API_PREFIX):
+        token = config.env("APP_TOKEN")
+        if not token:
+            return _api_error(503, "APP_TOKEN is not set in .env on the Mac")
+        if not secrets.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {token}".encode()):
+            return _api_error(401, "The access token was rejected")
+    elif path != "/health" and not _is_loopback(request.client.host if request.client else None):
+        return PlainTextResponse("The Repurposer pages only open on the Mac itself. Use the IV Repost app.", status_code=403)
+    return await call_next(request)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request: Request, exc: StarletteHTTPException):
+    if request.url.path.startswith(API_PREFIX):
+        return _api_error(exc.status_code, str(exc.detail))
+    return PlainTextResponse(str(exc.detail), status_code=exc.status_code)
 
 
 # ---------- helpers ----------
@@ -136,6 +176,9 @@ def spawn_worker(*args: str) -> subprocess.Popen:
     cmd = [sys.executable, str(ROOT / "worker.py"), *args]
     log.info("spawning %s", " ".join(cmd))
     return subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+app.include_router(api.build_router(get_conn, spawn_worker))
 
 
 def platform_or_404(platform: str) -> str:

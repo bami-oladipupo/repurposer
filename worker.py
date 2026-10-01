@@ -28,7 +28,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from repurposer import actions, config, db, digest, downloader, logsetup, notify, poller, rewrite, scheduler, transform  # noqa: E402
+from repurposer import actions, config, db, digest, downloader, logsetup, notify, poller, push, rewrite, scheduler, transform  # noqa: E402
 from repurposer import overrides as ov  # noqa: E402
 from repurposer.config import PLATFORMS, PREFIX  # noqa: E402
 from repurposer.publishers import module_for, publish_due  # noqa: E402
@@ -226,6 +226,23 @@ def stage_notify(cfg: dict[str, Any], run: Run) -> None:
         notify.send(cfg, text)
     else:
         log.info("nothing to report; no notification sent")
+    if must_send and run.kind != "dry-run":
+        stage_push(run)
+
+
+def stage_push(run: Run) -> None:
+    """Alert the IV Repost app on registered phones. A push failure is logged, never fatal to the run."""
+    if not push.device_count(run.conn):
+        return
+    title, body = push.summarise(run.as_dict())
+    try:
+        sent, errors = push.send_all(run.conn, title, body, route="activity" if not run.ok else "today")
+    except push.PushError as exc:
+        log.error("push not sent: %s", exc)
+        return
+    for err in errors:
+        log.error("push problem: %s", err)
+    log.info("push sent to %d device(s)", sent)
 
 
 # ---------- commands ----------
