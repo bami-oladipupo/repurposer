@@ -164,3 +164,28 @@ def test_cmd_status_and_job_publish_now(offline, capsys):
     assert job["ok"] == 1 and job["error"] is None and job["finished_at"]
     assert db.get_video(conn, "t1")["yt_status"] == "uploaded" and offline["pub"].calls == ["t1"]
     assert worker.cmd_job(conn, cfg, offline["log"], 999) == 2
+
+
+def test_stuck_post_alerts_once_then_daily(tmp_path):
+    from datetime import timedelta
+    import worker
+    from repurposer import db as dbm, notify
+    from repurposer.timeutil import iso, utcnow
+
+    conn = dbm.open_db(tmp_path / "t.db")
+    run = worker.Run(conn, "cycle", None)
+    run.needs_attention = [("instagram", "t1", "timeout")]
+    worker._mark_attention_due(conn, {}, run)
+    assert run.attention_due and notify.build_summary(run.as_dict())[1]
+
+    again = worker.Run(conn, "cycle", None)
+    again.needs_attention = [("instagram", "t1", "timeout")]
+    worker._mark_attention_due(conn, {}, again)
+    assert not again.attention_due and not notify.build_summary(again.as_dict())[1]
+
+    with dbm.tx(conn):
+        dbm.set_setting(conn, "attention_alerted", {"instagram:t1": iso(utcnow() - timedelta(hours=25))})
+    later = worker.Run(conn, "cycle", None)
+    later.needs_attention = [("instagram", "t1", "timeout")]
+    worker._mark_attention_due(conn, {}, later)
+    assert later.attention_due

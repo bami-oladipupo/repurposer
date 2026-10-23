@@ -32,7 +32,7 @@ from repurposer import actions, config, db, digest, downloader, logsetup, notify
 from repurposer import overrides as ov  # noqa: E402
 from repurposer.config import PLATFORMS, PREFIX  # noqa: E402
 from repurposer.publishers import module_for, publish_due  # noqa: E402
-from repurposer.timeutil import fmt_local, iso, utcnow  # noqa: E402
+from repurposer.timeutil import fmt_local, iso, parse, utcnow  # noqa: E402
 
 log = logging.getLogger("repurposer.worker")
 PLATFORM_ALIASES = {"yt": "youtube", "youtube": "youtube", "ig": "instagram", "instagram": "instagram"}
@@ -52,6 +52,7 @@ class Run:
         self.rolled: list[tuple[str, str, str]] = []
         self.alerts: list[str] = []
         self.needs_attention: list[tuple[str, str, str]] = []
+        self.attention_due = False  # a stuck post is new, or due its daily reminder
         self.videos_seen = 0
         self.notes: list[str] = []
         with db.tx(conn):
@@ -76,7 +77,8 @@ class Run:
         return {
             "run_id": self.run_id, "kind": self.kind, "videos_seen": self.videos_seen,
             "published": self.published, "failed": self.failed, "held": self.held, "rolled": self.rolled,
-            "alerts": self.alerts, "needs_attention": self.needs_attention, "stage_errors": self.stage_errors,
+            "alerts": self.alerts, "needs_attention": self.needs_attention,
+            "attention_due": self.attention_due, "stage_errors": self.stage_errors,
             "notes": self.notes,
         }
 
@@ -217,6 +219,26 @@ def stage_attention(conn: sqlite3.Connection, cfg: dict[str, Any], run: Run) -> 
         for v in db.rows(conn, f"SELECT tiktok_id, {px}_error AS err FROM videos WHERE {px}_status='failed' AND {px}_attempts > ?",
                          (retry_runs,)):
             run.needs_attention.append((plat, v["tiktok_id"], v["err"] or ""))
+    _mark_attention_due(conn, cfg, run)
+
+
+def _mark_attention_due(conn: sqlite3.Connection, cfg: dict[str, Any], run: Run) -> None:
+    """Stuck posts alert once when they first get stuck, then once a day while still stuck,
+    instead of on every 15 minute run."""
+    hours = float((cfg.get("notify") or {}).get("attention_reminder_hours", 24))
+    alerted: dict[str, str] = db.get_setting(conn, "attention_alerted", {}) or {}
+    now = utcnow()
+    kept: dict[str, str] = {}
+    for plat, tiktok_id, _ in run.needs_attention:
+        key = f"{plat}:{tiktok_id}"
+        last = alerted.get(key)
+        if last is None or (now - parse(last)).total_seconds() >= hours * 3600:
+            run.attention_due = True
+            last = iso(now)
+        kept[key] = last
+    if run.kind != "dry-run":
+        with db.tx(conn):
+            db.set_setting(conn, "attention_alerted", kept)
 
 
 def stage_notify(cfg: dict[str, Any], run: Run) -> None:

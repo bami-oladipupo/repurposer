@@ -66,7 +66,9 @@ def build_summary(run: dict[str, Any]) -> tuple[str, bool]:
     header = f"Repurposer run #{run.get('run_id', '?')} ({run.get('kind', 'cycle')}): " \
              f"{run.get('videos_seen', 0)} seen, {len(published)} published, {failures} problem(s)"
     text = header + ("\n\n" + "\n".join(lines) if lines else "")
-    must_send = bool(published or failed or alerts or stage_errors or rolled or attention)
+    # Stuck posts repeat every run until fixed, so they only count when new or due a reminder.
+    attention_due = run.get("attention_due", bool(attention))
+    must_send = bool(published or failed or alerts or stage_errors or rolled or attention_due)
     return text, must_send
 
 

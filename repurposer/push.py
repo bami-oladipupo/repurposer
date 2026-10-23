@@ -122,5 +122,10 @@ def summarise(run: dict[str, Any]) -> tuple[str, str]:
         lines.append(f"{names.get(stage, stage)} failed: {err.strip().splitlines()[0][:140]}")
     lines += [str(a)[:160] for a in run.get("alerts") or []]
     lines += [f"{stage} crashed" for stage, _ in run.get("stage_errors") or []]
+    stuck = run.get("needs_attention") or []
+    if stuck:
+        problems += 1
+        lines.append(f"{len(stuck)} post(s) stuck after retries: " +
+                     ", ".join(dict.fromkeys(names.get(p, p) for p, _, _ in stuck)))
     title = "Needs a look" if problems else "Posted"
     return title, "\n".join(lines) or "Run finished"
