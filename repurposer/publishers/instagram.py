@@ -7,6 +7,10 @@ to apps on the Facebook Login flow). The file is staged in a Cloudflare R2 bucke
 that takes (see staging.py) and removed afterwards. Create a REELS container with the URL, poll
 until FINISHED, then media_publish. The media_publish step only ever runs when a container ID
 exists and no media ID exists, so a crash mid-way cannot double-post.
+
+media_publish can time out on our side after Instagram has already posted the Reel. The container's
+status then reads PUBLISHED. That counts as posted: we look the Reel up and record it, and never make a
+second container for the same video (doing so is what used to post duplicates).
 """
 from __future__ import annotations
 
@@ -37,10 +41,16 @@ REFRESH_IF_DAYS_LEFT = 10
 POLL_EVERY_S = 15
 POLL_MAX_S = 600
 TIMEOUT = 60
+PUBLISH_TIMEOUT = 180  # media_publish often takes over a minute
+FIND_MEDIA_LOOKBACK = timedelta(days=3)
 
 
 class InstagramError(RuntimeError):
     pass
+
+
+class AlreadyPublished(InstagramError):
+    """The container was published, so the Reel is live even though we never got its media ID."""
 
 
 def load_token() -> dict[str, Any] | None:
@@ -169,14 +179,20 @@ def _create_container(tok: dict[str, Any], caption: str, share_to_feed: bool, vi
         "share_to_feed": "true" if share_to_feed else "false", "access_token": tok["access_token"]}, timeout=TIMEOUT))
 
 
+def _container_status(tok: dict[str, Any], container_id: str) -> dict[str, Any]:
+    return _check(requests.get(f"{GRAPH}/{container_id}", params={"fields": "status_code,status",
+                                                                 "access_token": tok["access_token"]}, timeout=TIMEOUT))
+
+
 def _wait_for_container(tok: dict[str, Any], container_id: str) -> None:
     waited = 0
     while waited <= POLL_MAX_S:
-        data = _check(requests.get(f"{GRAPH}/{container_id}", params={"fields": "status_code,status",
-                                                                     "access_token": tok["access_token"]}, timeout=TIMEOUT))
+        data = _container_status(tok, container_id)
         code = data.get("status_code")
         if code == "FINISHED":
             return
+        if code == "PUBLISHED":
+            raise AlreadyPublished(f"container {container_id} is already published")
         if code in ("ERROR", "EXPIRED"):
             raise InstagramError(f"container {container_id} {code}: {data.get('status')}")
         time.sleep(POLL_EVERY_S)
@@ -186,8 +202,49 @@ def _wait_for_container(tok: dict[str, Any], container_id: str) -> None:
 
 def _media_publish(tok: dict[str, Any], container_id: str) -> str:
     data = _check(requests.post(f"{GRAPH}/{tok['user_id']}/media_publish", data={
-        "creation_id": container_id, "access_token": tok["access_token"]}, timeout=TIMEOUT))
+        "creation_id": container_id, "access_token": tok["access_token"]}, timeout=PUBLISH_TIMEOUT))
     return str(data["id"])
+
+
+def _was_published(tok: dict[str, Any], container_id: str) -> bool:
+    """After media_publish failed or timed out: did Instagram post it anyway?"""
+    try:
+        return _container_status(tok, container_id).get("status_code") == "PUBLISHED"
+    except (InstagramError, requests.RequestException) as exc:
+        # Unknown. Keep the container ID: the next run checks it again before doing anything else.
+        log.warning("could not read container %s after publish error: %s", container_id, exc)
+        return False
+
+
+def _find_published_media(conn: sqlite3.Connection, tok: dict[str, Any], caption: str) -> str | None:
+    """The media ID of a Reel posted from our container: a recent post with the same caption that no
+    other video already claims. None if it cannot be found."""
+    try:
+        data = _check(requests.get(f"{GRAPH}/{tok['user_id']}/media", params={
+            "fields": "id,caption,timestamp", "limit": 25, "access_token": tok["access_token"]}, timeout=TIMEOUT))
+    except (InstagramError, requests.RequestException) as exc:
+        log.warning("could not list recent Instagram media: %s", exc)
+        return None
+    known = {r[0] for r in conn.execute("SELECT ig_media_id FROM videos WHERE ig_media_id IS NOT NULL")}
+    since = utcnow() - FIND_MEDIA_LOOKBACK
+    for m in data.get("data") or []:
+        when = parse((m.get("timestamp") or "").replace("+0000", "+00:00"))
+        if str(m.get("id")) in known or (when is not None and when < since):
+            continue
+        if (m.get("caption") or "").strip() == caption.strip():
+            return str(m["id"])
+    return None
+
+
+def _record_already_published(conn: sqlite3.Connection, tok: dict[str, Any], video: dict[str, Any],
+                              container_id: str, caption: str) -> PublishResult:
+    media_id = _find_published_media(conn, tok, caption)
+    log.warning("instagram %s: container %s was already published (media %s); recording it, not posting again",
+                video["tiktok_id"], container_id, media_id or "not found")
+    with db.tx(conn):
+        actions.mark_uploaded(conn, video["tiktok_id"], "instagram", ig_media_id=media_id)
+    link = _permalink(tok, media_id) if media_id else None
+    return PublishResult(True, "already published", link or f"instagram container {container_id} (published)")
 
 
 def _permalink(tok: dict[str, Any], media_id: str) -> str | None:
@@ -214,12 +271,14 @@ def publish(conn: sqlite3.Connection, video: dict[str, Any], workflow: dict[str,
         return PublishResult(False, f"local file missing: {path}")
     caption = captions.instagram_caption(video, workflow, override)
     share = bool((workflow.get("extra") or {}).get("share_to_feed", True))
+    container_id = video.get("ig_container_id")
     try:
-        container_id = video.get("ig_container_id")
         if container_id:
             # Resume: if the old container is still good we reuse it, otherwise start again.
             try:
                 _wait_for_container(tok, container_id)
+            except AlreadyPublished:
+                return _record_already_published(conn, tok, video, container_id, caption)
             except InstagramError as exc:
                 log.warning("previous container %s unusable (%s); creating a new one", container_id, exc)
                 container_id = None
@@ -230,7 +289,14 @@ def publish(conn: sqlite3.Connection, video: dict[str, Any], workflow: dict[str,
                 with db.tx(conn):
                     db.update_video(conn, video["tiktok_id"], ig_container_id=container_id)
                 _wait_for_container(tok, container_id)
-        media_id = _media_publish(tok, container_id)
+        try:
+            media_id = _media_publish(tok, container_id)
+        except Exception:
+            if _was_published(tok, container_id):
+                return _record_already_published(conn, tok, video, container_id, caption)
+            raise
+    except AlreadyPublished:
+        return _record_already_published(conn, tok, video, container_id, caption)
     except Exception as exc:  # noqa: BLE001
         return PublishResult(False, f"{type(exc).__name__}: {exc}")
     link = _permalink(tok, media_id)
